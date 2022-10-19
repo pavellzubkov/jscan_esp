@@ -1,7 +1,7 @@
 #include <j1939twai.h>
 
 #define CAN_TAG "can_twai"
-#define J1939_MY_ADR 25
+
 
 namespace J1939Twai
 {

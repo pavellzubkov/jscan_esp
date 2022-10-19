@@ -1,6 +1,7 @@
 #ifndef __J1939TWAI_H__
 #define __J1939TWAI_H__
 
+#define J1939_MY_ADR 25
 #define CAN_TX_GPIO_NUM (gpio_num_t)5
 #define CAN_RX_GPIO_NUM (gpio_num_t)4
 #define CAN_RX_TASK_PRIO 8
