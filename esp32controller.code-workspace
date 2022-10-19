@@ -1,0 +1,37 @@
+{
+	"folders": [
+		{
+			"path": "."
+		}
+	],
+	"settings": {
+		"editor.tokenColorCustomizations": {
+			"textMateRules": [
+				{
+					"scope": "string.quoted.double",
+					"settings": {
+						"foreground": "#8b7a69"
+					}
+				}
+			]
+		  },
+		  "editor.semanticTokenColorCustomizations": {
+				"enabled": true,
+				"rules": {
+				  "*.declaration": { "bold": true },
+				  "class": "#ff0000",
+				  "enum": "#ff0000"
+				}
+		},
+		"files.associations": {
+			"*.inc": "cpp",
+			"future": "cpp",
+			"*.ipp": "cpp",
+			"sstream": "cpp",
+			"regex": "cpp",
+			"gpio_hal.h": "c",
+			"mbcontroller.h": "c",
+			"string": "cpp"
+		},
+	}
+}
