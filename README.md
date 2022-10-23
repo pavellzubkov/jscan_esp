@@ -19,4 +19,6 @@ Example of using esp32 twai for J1939
 - AP_PASS: 12345678
 - ADR: http://10.10.10.10
 
+![Alt text](docs/circuit.png?raw=true "Optional Title")
+
 
