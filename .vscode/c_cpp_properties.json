@@ -2,28 +2,23 @@
     "configurations": [
         {
             "name": "ESP-IDF",
-            "compilerPath": "/home/pavel/.espressif/tools/xtensa-esp32-elf/esp-2021r2-patch3-8.4.0/xtensa-esp32-elf/bin/xtensa-esp32-elf-gcc",
-            "cStandard": "c99",
+            "compilerPath": "/home/pavel/.espressif/tools/xtensa-esp32-elf/esp-2022r1-11.2.0/xtensa-esp32-elf/bin/xtensa-esp32-elf-gcc",
+            "cStandard": "c11",
             "cppStandard": "c++17",
             "includePath": [
-                // "${config:idf.espIdfPath}/components/**",
-                // "${config:idf.espIdfPathWin}/components/**",
-                // "${config:idf.espAdfPath}/components/**",
-                // "${config:idf.espAdfPathWin}/components/**",
-                "${workspaceFolder}/**",
-                "${workspaceFolder}/components/**",
-                "/home/pavel/Документы/EMBEDDED/ESP32/Esp32Espressif/esp32controller/components/_common/**"
+                "${config:idf.espIdfPath}/components/**",
+                "${config:idf.espIdfPathWin}/components/**",
+                "${config:idf.espAdfPath}/components/**",
+                "${config:idf.espAdfPathWin}/components/**",
+                "${workspaceFolder}/**"
             ],
             "browse": {
                 "path": [
-                    // "${config:idf.espIdfPath}/components",
-                    // "${config:idf.espIdfPathWin}/components",
-                    // "${config:idf.espAdfPath}/components/**",
-                    // "${config:idf.espAdfPathWin}/components/**",
-                    "${workspaceFolder}",
-                    "${workspaceFolder}/components/**",
-                    "${workspaceFolder}/components",
-                    "/home/pavel/Документы/EMBEDDED/ESP32/Esp32Espressif/esp32controller/components/_common"
+                    "${config:idf.espIdfPath}/components",
+                    "${config:idf.espIdfPathWin}/components",
+                    "${config:idf.espAdfPath}/components/**",
+                    "${config:idf.espAdfPathWin}/components/**",
+                    "${workspaceFolder}"
                 ],
                 "limitSymbolsToIncludedHeaders": false
             },

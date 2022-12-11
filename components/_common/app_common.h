@@ -1,18 +1,17 @@
 #ifndef _APP_COMMON_H_
 #define _APP_COMMON_H_
 
-#include <esp_log.h>
+#include "esp_log.h"
+#include "esp_system.h"
+#include "esp_wifi.h"
 #include <stdlib.h>
 #include <stdbool.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <stdio.h>
-#include <driver/ledc.h>
-#include <driver/twai.h>
 #include <freertos/semphr.h>
 #include <string.h>
 #include <cJSON.h>
-#include <esp_netif.h>
 #include <esp_http_server.h>
 #include <esp_err.h>
 
@@ -97,6 +96,7 @@ struct J1939Module
 
 struct SystemModule
 {
+  
   esp_netif_t *netifService;
   httpd_handle_t server;
 };

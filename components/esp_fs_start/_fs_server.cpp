@@ -1,12 +1,10 @@
 
 #include <_fs_server.h>
-
+#include <esp_vfs.h>
 #include <string.h>
 #include <fcntl.h>
 #include <dirent.h>
 #include "esp_log.h"
-#include "esp_vfs.h"
-#include "lwip/apps/netbiosns.h"
 #include "cJSON.h"
 
 static const char *REST_TAG = "fileserver";

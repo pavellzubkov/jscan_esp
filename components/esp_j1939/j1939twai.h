@@ -7,6 +7,7 @@
 #define CAN_RX_TASK_PRIO 8
 #define CAN_TX_TASK_PRIO 9
 #include <app_common.h>
+#include <driver/twai.h>
 
 
 #define MYJ_BUFFERS_LENGTH 2

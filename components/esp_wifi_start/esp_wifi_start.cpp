@@ -1,9 +1,12 @@
 #include <esp_wifi_start.h>
+#include <vfs_lwip.h>
+#include <lwip/ip4_addr.h>
+#include <esp_mac.h>
 #include <string>
 
 #define JHOST_NAME "jscan"
 #define EXAMPLE_ESP_WIFI_SSID "J1939_AP"
-#define EXAMPLE_ESP_WIFI_CHANNEL 12
+#define EXAMPLE_ESP_WIFI_CHANNEL 10
 #define EXAMPLE_ESP_WIFI_PASS "12345678"
 #define EXAMPLE_MAX_STA_CONN 2
 
@@ -116,7 +119,7 @@ namespace WiFiNetStart
         ESP_ERROR_CHECK(esp_netif_init());
          state->sysModule.netifService = esp_netif_create_default_wifi_ap();
 
-        esp_netif_ip_info_t ipInfo;
+        esp_netif_ip_info_t ipInfo = {};        
         IP4_ADDR(&ipInfo.ip, 10, 10, 10, 10);
         IP4_ADDR(&ipInfo.gw, 10, 10, 10, 10);
         IP4_ADDR(&ipInfo.netmask, 255, 255, 255, 0);
@@ -126,7 +129,7 @@ namespace WiFiNetStart
         
         ESP_ERROR_CHECK(esp_netif_dhcps_start(state->sysModule.netifService));
 
-        ESP_ERROR_CHECK(wifi_init_softap(&wifi_config));        
+        ESP_ERROR_CHECK(wifi_init_softap(&wifi_config));
 
         return ESP_OK;
     }
