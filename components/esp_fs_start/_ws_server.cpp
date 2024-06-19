@@ -287,7 +287,7 @@ namespace WebSockServer
 
                     while (xQueueReceive(_state->j1939module.mesLongQueue, &(jmsgbig), 0) == pdTRUE)
                     {
-                        ESP_LOGW(TAG, "Long queue send pgn %d from %d",jmsgbig->lPGN,jmsgbig->nSrcAddr);
+                        ESP_LOGW(TAG, "Long queue send pgn %ld %d",jmsgbig->lPGN,jmsgbig->nSrcAddr);
                         sendJ1939Mes(jmsgbig);
                     }
                 }

@@ -80,7 +80,7 @@ namespace WiFiNetStart
             }
 
             default:
-                ESP_LOGW(TAG, "WiFi got event: %d", event_id);
+                ESP_LOGW(TAG, "WiFi got event: %ld", event_id);
                 break;
             }
         }

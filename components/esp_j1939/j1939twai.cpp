@@ -221,7 +221,7 @@ namespace J1939Twai
                         default:
                         {
                             if(mes.lPGN==65226 || mes.lPGN==65227){
-                                ESP_LOGW(CAN_TAG, "Short queue send pgn %d from %d",mes.lPGN,mes.nSrcAddr);
+                                ESP_LOGW(CAN_TAG, "Short queue send pgn %ld from %d",mes.lPGN,mes.nSrcAddr);
                             }
                             mesBuf[mesBufindex] = mes;
                             J1939MsgShort *ms = &mesBuf[mesBufindex];
@@ -241,7 +241,7 @@ namespace J1939Twai
 
     static void requestPGN(uint8_t from, uint32_t pgnN)
     {
-        ESP_LOGW(CAN_TAG, "Try send Req to ECM %X", pgnN);
+        ESP_LOGW(CAN_TAG, "Try send Req to ECM %ld", pgnN);
 
         uint8_t buf[8];
         buf[3] = (pgnN & 0xff000000) >> 24;
