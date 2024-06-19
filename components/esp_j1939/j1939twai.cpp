@@ -1,7 +1,7 @@
 #include <j1939twai.h>
+#include <Open_SAE_J1939/Open_SAE_J1939.h>
 
 #define CAN_TAG "can_twai"
-
 
 namespace J1939Twai
 {
@@ -10,6 +10,7 @@ namespace J1939Twai
     {
         // J1939Class J1939;
         AppState *_state;
+        J1939 j1939;
         static const twai_timing_config_t t_config = TWAI_TIMING_CONFIG_250KBITS();
         static const twai_filter_config_t f_config = TWAI_FILTER_CONFIG_ACCEPT_ALL();
         twai_general_config_t g_config = TWAI_GENERAL_CONFIG_DEFAULT(CAN_TX_GPIO_NUM, CAN_RX_GPIO_NUM, TWAI_MODE_NORMAL);
@@ -162,12 +163,15 @@ namespace J1939Twai
 
         static void twai_receive_task(void *arg)
         {
-            AppState *_appState = (AppState *)arg;
+            // AppState *_appState = (AppState *)arg;
+            J1939 *_j1939 = (J1939 *)arg;
             twai_message_t rx_msg;
             uint8_t mesBufindex = 0;
             uint8_t mesBufBigindex = 0;
             while (1)
             {
+
+                Open_SAE_J1939_Listen_For_Messages(_j1939);
 
                 esp_err_t er = twai_receive(&rx_msg, portMAX_DELAY); // portMAX_DELAY pdTICKS_TO_MS(20)
                 if (er == ESP_OK)
@@ -220,8 +224,9 @@ namespace J1939Twai
 
                         default:
                         {
-                            if(mes.lPGN==65226 || mes.lPGN==65227){
-                                ESP_LOGW(CAN_TAG, "Short queue send pgn %ld from %d",mes.lPGN,mes.nSrcAddr);
+                            if (mes.lPGN == 65226 || mes.lPGN == 65227)
+                            {
+                                ESP_LOGW(CAN_TAG, "Short queue send pgn %ld from %d", mes.lPGN, mes.nSrcAddr);
                             }
                             mesBuf[mesBufindex] = mes;
                             J1939MsgShort *ms = &mesBuf[mesBufindex];
@@ -268,6 +273,16 @@ namespace J1939Twai
 
         ESP_ERROR_CHECK(twai_start());
         ESP_LOGW(CAN_TAG, "Driver started");
+
+        /* Important to sent all non-address to 0xFF - Else we cannot use ECU address 0x0 */
+        uint8_t i;
+        for (i = 0; i < 255; i++)
+        {
+            j1939.other_ECU_address[i] = 0xFF;
+        }
+
+        /* Set the ECU address */
+        j1939.information_this_ECU.this_ECU_address = 0x05;
 
         _state->j1939module.mesShortQueue = xQueueCreate(10, sizeof(J1939MsgShort *));
 

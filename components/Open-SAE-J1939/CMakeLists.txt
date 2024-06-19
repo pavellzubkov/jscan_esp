@@ -1,5 +1,5 @@
 idf_component_register(
     SRC_DIRS .
     INCLUDE_DIRS .
-    REQUIRES _common driver Open-SAE-J1939
-)
+    REQUIRES driver
+                    )
