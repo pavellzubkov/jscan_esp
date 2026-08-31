@@ -1,4 +1,6 @@
 #include <esp_wifi_start.h>
+#include <esp_mac.h>
+#include <lwip/ip4_addr.h>
 #include <string>
 
 #define JHOST_NAME "jscan"

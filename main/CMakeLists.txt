@@ -1,6 +1,7 @@
 idf_component_register(
     SRCS "main.cpp"
-    INCLUDE_DIRS ""    
+    INCLUDE_DIRS ""
+    REQUIRES _common esp_wifi_start esp_fs_start esp_j1939
 )
 
 # Create a SPIFFS image from the contents of the 'spiffs_image' directory
