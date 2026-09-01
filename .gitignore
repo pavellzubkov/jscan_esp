@@ -53,3 +53,6 @@ managed_components/
 # sdkconfig
 sdkconfig.old
 
+# Инструкции для агентов (локальные)
+AGENTS.md
+
