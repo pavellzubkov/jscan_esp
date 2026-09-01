@@ -8,7 +8,7 @@ Example of using esp32 twai for J1939
 
 **Сборка**
 
-Для сборки - установить расширение EspressifIDF для VSCode использованная версия ESP-IDF - 4.3.2
+Для сборки - установить расширение EspressifIDF для VSCode использованная версия ESP-IDF - 6.1
 Перед сборкой выполнить idf.py reconfigure для инициализации системы сборки.
 [Веб интерфейс](https://github.com/pavellzubkov/vue3_embedded) в папке spiffs_image
 
