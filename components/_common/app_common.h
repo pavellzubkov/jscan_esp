@@ -8,7 +8,6 @@
 #include <freertos/task.h>
 #include <stdio.h>
 #include <driver/ledc.h>
-#include <driver/twai.h>
 #include <freertos/semphr.h>
 #include <string.h>
 #include <cJSON.h>

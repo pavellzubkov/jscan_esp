@@ -1,4 +1,5 @@
 #include <j1939twai.h>
+#include <driver/twai.h>
 
 #define CAN_TAG "can_twai"
 

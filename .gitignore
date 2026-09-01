@@ -49,6 +49,7 @@ Thumbs.db
 *.wmv
 
 build/
+managed_components/
 # sdkconfig
 sdkconfig.old
 
