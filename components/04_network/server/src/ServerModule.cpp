@@ -1,6 +1,7 @@
 #include "ServerModule.hpp"
 #include "StaticHandler.hpp"
 #include "WsHandler.hpp"
+#include "OtaApi.hpp"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 
@@ -27,9 +28,17 @@ esp_err_t ServerModule::begin() {
     }
 
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
+    // OTA-хендлеры выполняют длительные flash-операции (стирание/запись) прямо
+    // в задаче httpd. Увеличенный стек страхует от переполнения в этих путях.
+    config.stack_size = 16384;
+    config.max_uri_handlers = 32;
     config.lru_purge_enable = true;
     config.uri_match_fn = httpd_uri_match_wildcard;
     config.global_user_ctx = ctx_;
+
+    // OtaService делит с ServerModule одну FS (storage): OTA размонтирует её
+    // на время записи образа.
+    ota_.init(ctx_, &fs_);
 
     ESP_LOGI(TAG, "Starting HTTP server...");
     ret = httpd_start(&server_, &config);
@@ -42,6 +51,8 @@ esp_err_t ServerModule::begin() {
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT));
 
     reg_static_handler(server_);
+
+    OtaApi::reg(server_, &ota_);
 
     ws_ = new WsHandler(ctx_);
     esp_err_t ws_ret = ws_->reg(server_);

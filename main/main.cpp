@@ -8,6 +8,7 @@
 #include "esp_event.h"
 #include "esp_netif.h"
 #include "esp_log.h"
+#include "esp_ota_ops.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -24,6 +25,10 @@ static esp_err_t makeModule(AppContext* ctx, Args&&... args) {
     boot.add({name, [](AppContext* c) { return makeModule<Type>(c, ##__VA_ARGS__); }, priority, critical})
 
 extern "C" void app_main() {
+    // После успешной загрузки помечаем прошивку валидной: если новое приложение
+    // упадёт/не запустится, bootloader (при включённом APP_ROLLBACK) откатится на прошлое.
+    esp_ota_mark_app_valid_cancel_rollback();
+
     ESP_ERROR_CHECK(esp_event_loop_create_default());   // системные события (WiFi)
     ESP_ERROR_CHECK(esp_netif_init());                   // сетевой интерфейс
 

@@ -1,5 +1,6 @@
 #pragma once
 #include "esp_event_base.h"
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 
@@ -13,7 +14,9 @@ enum class app_event_id_t : int32_t {
     WS_CLIENT_CONNECTED,    // данные: ws_message_t (sockfd только)
     WS_CLIENT_DISCONNECTED, // данные: ws_message_t (sockfd только)
     WIFI_STATUS,            // данные: wifi_status_event_t
-    CONFIG_CHANGED          // данные: config_changed_event_t (задел)
+    CONFIG_CHANGED,         // данные: config_changed_event_t (задел)
+    OTA_BEGIN,              // начало OTA: flash-операции идут (данные: ota_begin_event_t)
+    OTA_END                 // конец OTA: flash-операции завершены (без данных)
 };
 
 // Максимальная длина WS-сообщения (батч снапшота до 8 КБ).
@@ -45,6 +48,13 @@ struct wifi_status_event_t {
     uint8_t num_clients;
     int8_t  rssi;
     uint8_t disconnect_reason;
+};
+
+// Данные для OTA_BEGIN. ack выставляется подписчиком после подготовки к
+// flash-операциям. В jscan нет термоконтура — событие оставлено для
+// совместимости с референсом и будущих подписчиков.
+struct ota_begin_event_t {
+    std::atomic<bool>* ack;
 };
 
 struct config_changed_event_t {

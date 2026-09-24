@@ -53,6 +53,9 @@ managed_components/
 # sdkconfig
 sdkconfig.old
 
+# OTA-архив: артефакт сборки, пересоздаётся при билде
+update.zip
+
 # Инструкции для агентов (локальные)
 AGENTS.md
 

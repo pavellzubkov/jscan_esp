@@ -10,3 +10,12 @@ set(EXTRA_COMPONENT_DIRS
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(JScaner)
+
+# Автоматическая упаковка OTA-архива после успешной сборки
+idf_build_get_property(build_dir BUILD_DIR)
+add_custom_command(
+    TARGET app
+    POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E env python ${CMAKE_CURRENT_LIST_DIR}/scripts/package_ota.py ${build_dir}
+    COMMENT "Packaging OTA update archive (update.zip)"
+)
