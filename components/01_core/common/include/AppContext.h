@@ -23,7 +23,7 @@ struct AppContext {
             .task_name = "app_event_loop",
             .task_priority = 5,
             .task_stack_size = 4096,
-            .task_core_id = 1};
+            .task_core_id = 0};  // ядро 0 безопасно для ESP32 и ESP32-S3
         esp_err_t err = esp_event_loop_create(&args, &event_loop);
         if (err != ESP_OK) return err;
         events.setEventLoop(event_loop);

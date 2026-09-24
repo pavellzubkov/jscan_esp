@@ -35,8 +35,11 @@ esp_err_t LittleFsService::mount(bool formatIfFail)
     esp_vfs_littlefs_conf_t conf = {
         .base_path = basePath_.c_str(),
         .partition_label = partitionLabel_.c_str(),
+        .partition = nullptr,
         .format_if_mount_failed = formatIfFail,
+        .read_only = false,
         .dont_mount = false,
+        .grow_on_mount = false,
     };
 
     esp_err_t ret = esp_vfs_littlefs_register(&conf);

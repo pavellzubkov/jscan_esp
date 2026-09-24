@@ -64,6 +64,9 @@ void OtaApi::reg(httpd_handle_t server, OtaService* ota) {
         .method = HTTP_GET,
         .handler = ota_status_get_handler,
         .user_ctx = ota,
+        .is_websocket = false,
+        .handle_ws_control_frames = false,
+        .supported_subprotocol = nullptr,
     };
     httpd_register_uri_handler(server, &ota_status_uri);
 
@@ -72,6 +75,9 @@ void OtaApi::reg(httpd_handle_t server, OtaService* ota) {
         .method = HTTP_POST,
         .handler = ota_storage_post_handler,
         .user_ctx = ota,
+        .is_websocket = false,
+        .handle_ws_control_frames = false,
+        .supported_subprotocol = nullptr,
     };
     httpd_register_uri_handler(server, &ota_storage_uri);
 
@@ -80,6 +86,9 @@ void OtaApi::reg(httpd_handle_t server, OtaService* ota) {
         .method = HTTP_POST,
         .handler = ota_app_post_handler,
         .user_ctx = ota,
+        .is_websocket = false,
+        .handle_ws_control_frames = false,
+        .supported_subprotocol = nullptr,
     };
     httpd_register_uri_handler(server, &ota_app_uri);
 

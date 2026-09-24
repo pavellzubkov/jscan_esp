@@ -1,6 +1,7 @@
-# jscan_esp — сканер J1939 на ESP32
+# jscan_esp — сканер J1939 на ESP32-S3
 
-Прошивка ESP32 (ESP-IDF 6.1, C/C++17) для чтения J1939-сообщений из CAN-шины.
+Прошивка ESP32-S3 (модуль N16R8: флеш 16MB, PSRAM 8MB Octal SPI; ESP-IDF 6.1,
+C/C++17) для чтения J1939-сообщений из CAN-шины.
 TWAI (CAN) принимает фреймы, данные накапливаются в снапшоты и публикуются
 браузеру через WiFi (softAP) + WebSocket (бинарный протокол, батч-снапшоты).
 
@@ -59,8 +60,11 @@ idf.py build         # единственная проверка (тестов/�
 idf.py -p <COMx> flash monitor
 ```
 
-Кастомная таблица разделов `partitions_new.csv` (factory app 1MB + LittleFS
-`storage` 1MB + LittleFS `config` 256K) фиксируется в `sdkconfig.defaults`.
+Кастомная таблица разделов `partitions_new.csv` (флеш 16MB): bootloader +
+разделы nvs/otadata/phy_init, OTA-разделы 1536K+1536K, LittleFS `storage` 1M
+(статика фронта) и LittleFS `config` (остаток ~11.9MB). Фиксируется в
+`sdkconfig.defaults` вместе с target `esp32s3`, `CONFIG_ESPTOOLPY_FLASHSIZE="16MB"`
+и PSRAM (`CONFIG_SPIRAM=y`, `CONFIG_SPIRAM_MODE_OCT=y`).
 Статика фронта упаковывается из `frontend/dist` через
 `littlefs_create_partition_image(storage ../frontend/dist FLASH_IN_PROJECT)`.
 

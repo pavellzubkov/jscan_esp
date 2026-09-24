@@ -13,7 +13,7 @@ const char* TAG = "j1939_sys";
 // массив J1939Proto::BatchRecord (до 2 КБ при kMaxRecords=128).
 constexpr uint16_t kTaskStackSize = 6144;
 constexpr uint8_t  kTaskPriority  = 8;
-constexpr uint8_t  kTaskCore      = 1;
+constexpr uint8_t  kTaskCore      = 0;   // ядро 0 безопасно для ESP32 и ESP32-S3
 }
 
 J1939System::J1939System(AppContext* ctx)

@@ -1,9 +1,10 @@
 # Name,   Type, SubType, Offset,  Size, Flags
 # Note: if you have increased the bootloader size, make sure to update the offsets to avoid overlap
+# Флеш 16MB (ESP32-S3 N16R8). config — отрицательный размер: заполняет остаток до конца флеша.
 nvs,      data, nvs,      0x9000,  20K,
 otadata,  data, ota,      ,        8K,
 phy_init, data, phy,      ,        4K,
 ota_0,    app,  ota_0,    ,        1536K,
 ota_1,    app,  ota_1,    ,        1536K,
-storage,  data, littlefs, ,        512K,
-config,   data, littlefs, ,        256K,
+storage,  data, littlefs, ,        1M,
+config,   data, littlefs, ,        -0x1000000,

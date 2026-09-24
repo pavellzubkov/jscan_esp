@@ -81,8 +81,11 @@
   "idf.cmakeCompilerArgs": [
     "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON"
   ],
-  "idf.customExtraVars": {},
+  "idf.customExtraVars": {
+    "IDF_TARGET": "esp32s3"
+  },
   "idf.currentSetup": "G:\\ESPIDFv6.1\\.espressif\\v6.1\\esp-idf",
   "idf.portWin": "COM5",
-  "idf.flashType": "UART"
+  "idf.flashType": "UART",
+  "idf.port": "COM3"
 }
