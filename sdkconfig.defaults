@@ -18,3 +18,7 @@ CONFIG_HTTPD_WS_SUPPORT=y
 # PSRAM 8MB (Octal SPI) модуля N16R8.
 CONFIG_SPIRAM=y
 CONFIG_SPIRAM_MODE_OCT=y
+
+# LittleFS mount/format в main-задаче (BootManager) требует много стека;
+# дефолтных 3584 байт не хватает — stack overflow при форматировании config.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
