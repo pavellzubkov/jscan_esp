@@ -1,7 +1,10 @@
 #include "StaticHandler.hpp"
+#include "HttpCommon.hpp"
+#include "HardwareConfig.h"
 #include "esp_log.h"
 #include "esp_vfs.h"
 #include <cstring>
+#include <cstdio>
 #include <fcntl.h>
 #include <unistd.h>
 
@@ -98,6 +101,83 @@ static void build_filepath(static_ctx_t* ctx, const char* uri,
     }
 }
 
+// Ультра-агрессивный captive-перехват. Работает безусловно: сеть jscan всегда
+// работает как softAP (нет STA-режима), поэтому редирект на портал всегда уместен.
+static esp_err_t is_captive(httpd_req_t* req) {
+    // IP портала — из HardwareConfig (единый источник правды, не хардкод строки).
+    char ap_ip[16];
+    uint32_t a = Hw::kApIp;
+    snprintf(ap_ip, sizeof(ap_ip), "%u.%u.%u.%u",
+             static_cast<unsigned>((a >> 24) & 0xFF),
+             static_cast<unsigned>((a >> 16) & 0xFF),
+             static_cast<unsigned>((a >> 8) & 0xFF),
+             static_cast<unsigned>(a & 0xFF));
+
+    char portal_root[48];
+    char portal_captive[64];
+    snprintf(portal_root, sizeof(portal_root), "http://%s", ap_ip);
+    snprintf(portal_captive, sizeof(portal_captive), "http://%s/#/captive", ap_ip);
+
+    char host_buffer[100] = {0};
+    const char* uri = req->uri;
+
+    // 1. Специфичные URI — ВСЕГДА редирект на портал!
+    if (strcmp(uri, "/generate_204") == 0 ||
+        strcmp(uri, "/gen_204") == 0 ||
+        strcmp(uri, "/ncsi.txt") == 0 ||
+        strcmp(uri, "/connecttest.txt") == 0 ||
+        strcmp(uri, "/success.txt") == 0 ||
+        strcmp(uri, "/hotspot-detect.html") == 0) {
+        ESP_LOGI(TAG, "Captive detected: %s -> REDIRECT", uri);
+        http::setStatus(req, http::status::kFound);
+        httpd_resp_set_hdr(req, "Location", portal_captive);
+        http::setCors(req);
+        httpd_resp_send(req, "Redirect to captive portal", HTTPD_RESP_USE_STRLEN);
+        return ESP_OK;
+    }
+
+    // 2. Получаем Host header
+    esp_err_t host_result =
+        httpd_req_get_hdr_value_str(req, "Host", host_buffer, sizeof(host_buffer));
+
+    // 3. Редирект для известных captive-доменов
+    if (host_result == ESP_OK && host_buffer[0] != '\0') {
+        const char* captive_domains[] = {
+            "msftconnecttest.com",
+            "captive.apple.com",
+            "connectivity-check.ubuntu.com",
+            "clients3.google.com",
+            "connectivitycheck.android.com",
+            "android.clients.google.com",
+            "gstatic.com",
+            "apple.com"
+        };
+
+        for (const char* domain : captive_domains) {
+            if (strstr(host_buffer, domain) != nullptr) {
+                ESP_LOGI(TAG, "Captive domain redirect: %s", host_buffer);
+                http::setStatus(req, http::status::kFound);
+                httpd_resp_set_hdr(req, "Location", portal_captive);
+                http::setCors(req);
+                httpd_resp_send(req, "Redirect to captive portal", HTTPD_RESP_USE_STRLEN);
+                return ESP_OK;
+            }
+        }
+
+        // 4. Для всех остальных запросов с Host, НЕ равным нашему IP
+        if (strcmp(host_buffer, ap_ip) != 0) {
+            ESP_LOGI(TAG, "Foreign host redirect: %s", host_buffer);
+            http::setStatus(req, http::status::kFound);
+            httpd_resp_set_hdr(req, "Location", portal_root);
+            http::setCors(req);
+            httpd_resp_send(req, "Redirect to captive portal", HTTPD_RESP_USE_STRLEN);
+            return ESP_OK;
+        }
+    }
+
+    return ESP_FAIL;
+}
+
 static esp_err_t static_get_handler(httpd_req_t* req) {
     auto* ctx = static_cast<static_ctx_t*>(req->user_ctx);
     if (!ctx) {
@@ -107,6 +187,9 @@ static esp_err_t static_get_handler(httpd_req_t* req) {
     }
 
     if (is_uri_safe(req) != ESP_OK) return ESP_FAIL;
+
+    // Captive-перехват — до раздачи файлов (редирект на портал).
+    if (is_captive(req) == ESP_OK) return ESP_OK;
 
     char filepath[FILE_PATH_MAX];
     build_filepath(ctx, req->uri, filepath, sizeof filepath);

@@ -1,4 +1,5 @@
 #include "WifiApModule.hpp"
+#include "simple_dns_server.hpp"
 #include "HardwareConfig.h"
 #include "esp_log.h"
 #include <cstring>
@@ -105,11 +106,34 @@ esp_err_t WifiApModule::begin() {
     ESP_LOGI(TAG, "softAP started: ssid=%s channel=%u maxSta=%u",
              ctx_->config.apSsid, ctx_->config.apChannel,
              ctx_->config.maxStaConn);
+
+    // Запуск DNS-сервера (captive portal): все DNS-запросы клиентов AP
+    // резолвятся на IP точки доступа, где их перехватит HTTP-редирект.
+    if (dns_) {
+        dns_->stop();
+        delete dns_;
+    }
+    dns_ = new DnsServer(Hw::kApIp);
+    if (dns_ && !dns_->start()) {
+        ESP_LOGW(TAG, "Failed to start DNS server");
+        delete dns_;
+        dns_ = nullptr;
+    } else {
+        ESP_LOGI(TAG, "Captive portal DNS server started on %s",
+                 "10.10.10.10");
+    }
     return ESP_OK;
 }
 
 void WifiApModule::stop() {
     if (!started_) return;
+
+    // Остановка DNS-сервера (AP/captive portal)
+    if (dns_) {
+        dns_->stop();
+        delete dns_;
+        dns_ = nullptr;
+    }
 
     esp_wifi_stop();
     esp_wifi_deinit();
