@@ -14,4 +14,9 @@ constexpr uint32_t kCanBitrate = 250000;
 constexpr uint32_t kPgnRequest   = 59904;   // RQST
 constexpr uint32_t kPgnTpCm      = 60416;   // TP.CM (connection management)
 constexpr uint32_t kPgnTpDt      = 60160;   // TP.DT (data transfer)
+// Статический IP softAP (10.10.10.10/24). Значения в network byte order —
+// так их хранит поле .addr структуры esp_ip4_addr_t (esp_netif_set_ip_info).
+constexpr uint32_t kApIp      = 0x0A0A0A0A; // 10.10.10.10
+constexpr uint32_t kApGateway = 0x0A0A0A0A; // 10.10.10.10
+constexpr uint32_t kApNetmask = 0x00FFFFFF; // 255.255.255.0
 }

@@ -1,0 +1,24 @@
+#pragma once
+#include "AppContext.h"
+#include "esp_wifi.h"
+#include "esp_netif.h"
+#include <cstdint>
+
+// SoftAP-точка доступа. Конфиг (ssid/pass/channel/maxStaConn) из ctx->config.
+// Публикует WIFI_STATUS на событиях AP_STACONNECTED/AP_STADISCONNECTED.
+class WifiApModule {
+public:
+    explicit WifiApModule(AppContext* ctx);
+    ~WifiApModule();
+
+    esp_err_t begin();   // esp_netif_init + create_default_wifi_ap + start
+    void      stop();
+
+private:
+    AppContext* ctx_;
+    esp_netif_t* netif_ = nullptr;
+    bool started_ = false;
+
+    static void eventHandler(void* arg, esp_event_base_t base, int32_t id, void* data);
+    void onEvent(esp_event_base_t base, int32_t id, void* data);
+};
