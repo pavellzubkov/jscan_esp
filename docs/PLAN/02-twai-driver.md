@@ -1,5 +1,7 @@
 # STEP-02 — `02_hardware/twai` (TwaiDriver)
 
+> Статус: **done**
+
 > Контекст: свежая сессия. STEP-01 выполнен (`01_core/common` существует,
 > проект собирается). Этот шаг выносит TWAI-часть из старого
 > `components/esp_j1939/j1939twai.cpp` в «глупый» драйвер без AppContext.

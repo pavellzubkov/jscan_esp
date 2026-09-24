@@ -1,5 +1,7 @@
 # STEP-06 — `04_network/communication`
 
+> Статус: **done**
+
 > Контекст: свежая сессия. STEP-01..05 выполнены, проект собирается. Этот шаг
 > создаёт CommunicationModule — протокольный слой между WS-транспортом
 > (ServerModule/WsHandler) и J1939-системой. Модуль не подключён в main до
