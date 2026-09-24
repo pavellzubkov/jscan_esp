@@ -3,16 +3,14 @@
 #include "esp_twai.h"
 #include "esp_twai_onchip.h"
 #include <cstring>
-
-namespace {
+#include <new>
 
 // Слот приёма: буфер данных + фрейм, заполняемый в ISR-колбэке.
-struct RxSlot {
+// Определение вложенного типа (объявлен в TwaiDriver.h как RxSlot).
+struct TwaiDriver::RxSlot {
     twai_frame_t frame;
     uint8_t      data[TWAI_FRAME_MAX_LEN];
 };
-
-} // namespace
 
 // ISR-колбэк приёма: вызывается драйвером на каждый принятый кадр.
 bool TwaiDriver::rxDoneCb(twai_node_handle_t node,

@@ -1,7 +1,9 @@
+# j1939_system подключён временно (STEP-03), чтобы компонент компилировался;
+# в STEP-07 main переписывается на BootManager, и список REQUIRES изменится.
 idf_component_register(
     SRCS "main.cpp"
     INCLUDE_DIRS ""
-    REQUIRES _common esp_wifi_start esp_fs_start esp_j1939
+    REQUIRES _common esp_wifi_start esp_fs_start esp_j1939 j1939_system
 )
 
 # Create a SPIFFS image from the contents of the 'spiffs_image' directory
