@@ -41,15 +41,9 @@ void WifiApModule::onEvent(esp_event_base_t base, int32_t id, void* /*data*/) {
 esp_err_t WifiApModule::begin() {
     if (started_) return ESP_OK;
 
-    // Идемпотентно: повторный вызов безопасен.
-    esp_err_t ret = esp_netif_init();
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "esp_netif_init failed: %s", esp_err_to_name(ret));
-        return ret;
-    }
-
+    // esp_netif_init() гарантирует NetworkController::begin() перед вызовом.
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
-    ret = esp_wifi_init(&cfg);
+    esp_err_t ret = esp_wifi_init(&cfg);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "esp_wifi_init failed: %s", esp_err_to_name(ret));
         return ret;

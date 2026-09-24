@@ -11,7 +11,7 @@ public:
     explicit WifiApModule(AppContext* ctx);
     ~WifiApModule();
 
-    esp_err_t begin();   // esp_netif_init + create_default_wifi_ap + start
+    esp_err_t begin();   // esp_wifi_init + create_default_wifi_ap + start
     void      stop();
 
 private:

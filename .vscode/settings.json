@@ -87,5 +87,8 @@
   "idf.currentSetup": "G:\\ESPIDFv6.1\\.espressif\\v6.1\\esp-idf",
   "idf.portWin": "COM5",
   "idf.flashType": "UART",
-  "idf.port": "COM3"
+  "idf.port": "COM3",
+  "idf.openOcdConfigs": [
+    "board/esp32s3-builtin.cfg"
+  ]
 }

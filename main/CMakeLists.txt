@@ -2,7 +2,7 @@ idf_component_register(
     SRCS "main.cpp"
     INCLUDE_DIRS ""
     REQUIRES common config_store communication netctrl j1939_system
-             esp_event esp_netif freertos log
+             freertos log
 )
 
 # Create a LittleFS image from the contents of the 'frontend/dist' directory

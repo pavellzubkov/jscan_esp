@@ -1,6 +1,7 @@
 #include "ConfigStore.h"
 #include "cJSON.h"
 #include "esp_log.h"
+#include "nvs_flash.h"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -35,6 +36,20 @@ ConfigStore::~ConfigStore() {
 }
 
 esp_err_t ConfigStore::begin() {
+    // NVS нужен драйверу Wi-Fi (конфиг WiFi-модуля), а также phy_init.
+    // Инициализируем здесь — config первый модуль загрузки. При сбое не
+    // фейлим модуль (он critical): сеть упадёт в degraded mode, а J1939-скан
+    // продолжит работать.
+    esp_err_t nvs = nvs_flash_init();
+    if (nvs == ESP_ERR_NVS_NO_FREE_PAGES || nvs == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        nvs_flash_erase();
+        nvs = nvs_flash_init();
+    }
+    if (nvs != ESP_OK) {
+        ESP_LOGW(TAG, "NVS init failed (%s) — WiFi will be down, degraded mode",
+                 esp_err_to_name(nvs));
+    }
+
     esp_err_t err = fs_.mount();
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to mount LittleFS: %s", esp_err_to_name(err));
@@ -122,8 +137,10 @@ void ConfigStore::loadFromFs() {
 
     // Числовые поля с диапазонами (невалидные → дефолт структуры).
     const cJSON* it = cJSON_GetObjectItem(root, "ap_channel");
+    // Страна по умолчанию (cc=01) разрешает каналы 1..11; 12+ уронит
+    // esp_wifi_set_config — поэтому валидируем строго по этому диапазону.
     ctx_->config.apChannel =
-        static_cast<uint8_t>(clampU32(it, 1, 14, ctx_->config.apChannel));
+        static_cast<uint8_t>(clampU32(it, 1, 11, ctx_->config.apChannel));
 
     it = cJSON_GetObjectItem(root, "max_sta_conn");
     ctx_->config.maxStaConn =

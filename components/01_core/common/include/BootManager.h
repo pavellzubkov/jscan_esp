@@ -2,8 +2,24 @@
 #include "esp_err.h"
 #include <cstddef>
 #include <cstdint>
+#include <utility>
 
 class AppContext;
+
+// Единая точка создания модуля: new -> begin -> delete при ошибке.
+// Объявлен здесь, чтобы main оставался декларативной таблицей модулей.
+template <typename Module, typename... Args>
+inline esp_err_t makeModule(AppContext* ctx, Args&&... args) {
+    Module* m = new Module(ctx, std::forward<Args>(args)...);
+    esp_err_t err = m->begin();
+    if (err != ESP_OK) { delete m; }
+    return err;
+}
+
+// Регистрация модуля в BootManager. Критичные модули при ошибке останавливают
+// загрузку; некритичные — логируют ошибку, но система продолжает старт.
+#define REGISTER_MODULE(boot, name, Type, priority, critical, ...) \
+    (boot).add({name, [](AppContext* c) { return makeModule<Type>(c, ##__VA_ARGS__); }, priority, critical})
 
 /**
  * @brief BootManager — табличный загрузчик модулей.

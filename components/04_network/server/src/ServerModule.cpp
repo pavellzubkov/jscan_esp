@@ -50,8 +50,11 @@ esp_err_t ServerModule::begin() {
     ESP_LOGI(TAG, "HTTP server started, free heap: %u B",
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT));
 
-    reg_static_handler(server_);
-
+    // Порядок важен: статик-хендлер регистрирует wildcard `/*`, который через
+    // httpd_uri_match_wildcard матчит любой URI. Если зарегистрировать его первым,
+    // httpd_register_uri_handler будет считать /api/ota/* и /ws уже занятыми
+    // (ESP_ERR_HTTPD_HANDLER_EXISTS), а поиск хендлера пойдёт по порядку
+    // регистрации. Поэтому сначала конкретные URI, wildcard — последним.
     OtaApi::reg(server_, &ota_);
 
     ws_ = new WsHandler(ctx_);
@@ -60,6 +63,8 @@ esp_err_t ServerModule::begin() {
         ESP_LOGE(TAG, "Failed to register WS handler: %s",
                  esp_err_to_name(ws_ret));
     }
+
+    reg_static_handler(server_);
 
     ESP_LOGI(TAG, "ServerModule ready");
     return ESP_OK;

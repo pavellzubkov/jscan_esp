@@ -129,7 +129,7 @@ private:
   оставить дефолты (уже в `AppConfig`) и `dirty_ = true` (сохранить при первом
   тике); парсить cJSON: `ap_ssid`, `ap_password`, `ap_channel`, `max_sta_conn`,
   `snapshot_interval_ms`, `snapshot_ttl_ms`, `max_tracked_pgns`; скопировать в
-  `ctx->config` (только валидные значения, диапазоны: channel 1–14,
+  `ctx->config` (только валидные значения, диапазоны: channel 1–11,
   interval 100–1000, ttl 500–10000, maxTracked 16–256).
 - `saveToFs()`: собрать cJSON-объект из `ctx->config`, `cJSON_PrintUnformatted`,
   `fs_.writeFile`, `free`; снять `dirty_`; залогировать `ESP_LOGI`.
