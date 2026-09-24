@@ -159,7 +159,7 @@ static esp_err_t static_get_handler(httpd_req_t* req) {
 
 esp_err_t reg_static_handler(httpd_handle_t server) {
     auto* ctx = new static_ctx_t();
-    strlcpy(ctx->base_path, "/spiffs", sizeof ctx->base_path);
+    strlcpy(ctx->base_path, "/littlefs", sizeof ctx->base_path);
 
     httpd_uri_t uri = {};
     uri.uri = "/*";

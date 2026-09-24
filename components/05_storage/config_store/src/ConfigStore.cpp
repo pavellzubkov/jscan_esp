@@ -4,6 +4,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 static const char* TAG = "ConfigStore";
 
@@ -17,9 +20,12 @@ static uint32_t clampU32(const cJSON* item, uint32_t lo, uint32_t hi,
     return static_cast<uint32_t>(v);
 }
 
-ConfigStore::ConfigStore(AppContext* ctx)
+ConfigStore::ConfigStore(AppContext* ctx, const char* basePath,
+                         const char* partitionLabel)
     : ctx_(ctx),
-      fs_("/spiffs", "storage", true) {}
+      basePath_(basePath ? basePath : "/config"),
+      partitionLabel_(partitionLabel ? partitionLabel : "config"),
+      fs_(basePath_.c_str(), partitionLabel_.c_str(), true) {}
 
 ConfigStore::~ConfigStore() {
     if (task_) {
@@ -31,7 +37,7 @@ ConfigStore::~ConfigStore() {
 esp_err_t ConfigStore::begin() {
     esp_err_t err = fs_.mount();
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to mount SPIFFS: %s", esp_err_to_name(err));
+        ESP_LOGE(TAG, "Failed to mount LittleFS: %s", esp_err_to_name(err));
         return err;
     }
 
@@ -43,7 +49,8 @@ esp_err_t ConfigStore::begin() {
         task_ = nullptr;
         return ESP_FAIL;
     }
-    ESP_LOGI(TAG, "ConfigStore started");
+    ESP_LOGI(TAG, "ConfigStore started (littlefs: %s)",
+             partitionLabel_.c_str());
     return ESP_OK;
 }
 
@@ -57,17 +64,38 @@ void ConfigStore::setAndSave(const AppConfig& next) {
 }
 
 void ConfigStore::loadFromFs() {
-    char* buf = nullptr;
-    size_t len = 0;
-    if (fs_.readFile(kConfigPath, &buf, &len) != ESP_OK) {
-        if (buf) free(buf);
+    std::string full = basePath_ + kConfigPath;
+
+    struct stat st;
+    if (stat(full.c_str(), &st) != 0 || !S_ISREG(st.st_mode)) {
         ESP_LOGW(TAG, "No config file '%s', using defaults (will save on first tick)",
-                 kConfigPath);
+                 full.c_str());
         dirty_ = true;
         return;
     }
-    if (len == 0 || !buf) {
-        if (buf) free(buf);
+    if (st.st_size <= 0) {
+        dirty_ = true;
+        return;
+    }
+
+    int fd = open(full.c_str(), O_RDONLY);
+    if (fd < 0) {
+        ESP_LOGW(TAG, "Failed to open config file '%s', using defaults",
+                 full.c_str());
+        dirty_ = true;
+        return;
+    }
+
+    char* buf = static_cast<char*>(malloc(static_cast<size_t>(st.st_size)));
+    if (!buf) {
+        close(fd);
+        dirty_ = true;
+        return;
+    }
+    ssize_t rd = read(fd, buf, static_cast<size_t>(st.st_size));
+    close(fd);
+    if (rd != st.st_size) {
+        free(buf);
         dirty_ = true;
         return;
     }
@@ -114,7 +142,7 @@ void ConfigStore::loadFromFs() {
         clampU32(it, 16, 256, ctx_->config.maxTrackedPgns));
 
     cJSON_Delete(root);
-    ESP_LOGI(TAG, "Config loaded from %s", kConfigPath);
+    ESP_LOGI(TAG, "Config loaded from %s", full.c_str());
 }
 
 void ConfigStore::saveToFs() {
@@ -141,15 +169,46 @@ void ConfigStore::saveToFs() {
         return;
     }
 
-    esp_err_t err = fs_.writeFile(kConfigPath, text, strlen(text));
-    cJSON_free(text);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to save config '%s': %s", kConfigPath,
-                 esp_err_to_name(err));
+    // Атомарная запись: пишем tmp, проталкиваем в flash (fsync), затем rename —
+    // LittleFS rename атомарен, при сбое питания конфиг не «уполовинивается».
+    std::string full = basePath_ + kConfigPath;
+    std::string tmp = full + ".tmp";
+
+    int fd = open(tmp.c_str(), O_CREAT | O_TRUNC | O_WRONLY, 0666);
+    if (fd < 0) {
+        ESP_LOGE(TAG, "Failed to open '%s' for write (errno=%d)",
+                 tmp.c_str(), errno);
+        cJSON_free(text);
         return;
     }
+
+    const char* p = text;
+    size_t remaining = strlen(text);
+    while (remaining > 0) {
+        ssize_t w = write(fd, p, remaining);
+        if (w < 0) {
+            if (errno == EINTR) continue;
+            ESP_LOGE(TAG, "Failed to write config '%s' (errno=%d)",
+                     tmp.c_str(), errno);
+            close(fd);
+            cJSON_free(text);
+            return;
+        }
+        p += w;
+        remaining -= static_cast<size_t>(w);
+    }
+    fsync(fd);
+    close(fd);
+    cJSON_free(text);
+
+    if (rename(tmp.c_str(), full.c_str()) != 0) {
+        ESP_LOGE(TAG, "Failed to rename '%s' -> '%s' (errno=%d)",
+                 tmp.c_str(), full.c_str(), errno);
+        return;
+    }
+
     dirty_ = false;
-    ESP_LOGI(TAG, "Config saved to %s", kConfigPath);
+    ESP_LOGI(TAG, "Config saved to %s", full.c_str());
 }
 
 void ConfigStore::autoSaveWrapper(void* p) {

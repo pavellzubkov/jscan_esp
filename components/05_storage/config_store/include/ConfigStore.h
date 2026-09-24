@@ -1,16 +1,18 @@
 #pragma once
 #include "AppContext.h"
-#include "SpiffsService.hpp"
+#include "LittleFsService.hpp"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include <cstdint>
+#include <string>
 
 // Хранилище конфигурации. Единственный писатель ctx->config (load/defaults).
-// Монтирует SPIFFS (если не смонтирован), читает /spiffs/config.json при старте,
+// Монтирует LittleFS (если не смонтирован), читает /config/config.json при старте,
 // сохраняет с дебаунсом при изменении, публикует CONFIG_CHANGED.
 class ConfigStore {
 public:
-    explicit ConfigStore(AppContext* ctx);
+    ConfigStore(AppContext* ctx, const char* basePath = "/config",
+                const char* partitionLabel = "config");
     ~ConfigStore();
 
     esp_err_t begin();   // монтирует FS, грузит конфиг, создаёт таск автосейва
@@ -20,10 +22,12 @@ public:
     void setAndSave(const AppConfig& next);   // не используется в этом этапе — задел
 
 private:
-    static constexpr const char* kConfigPath = "/config.json";   // в /spiffs
+    static constexpr const char* kConfigPath = "/config.json";   // в /config
 
     AppContext* ctx_;
-    SpiffsService fs_;
+    std::string basePath_;
+    std::string partitionLabel_;
+    LittleFsService fs_;
 
     void loadFromFs();       // читает JSON → ctx->config (нет файла → дефолты + save)
     void saveToFs();         // ctx->config → JSON → fs_

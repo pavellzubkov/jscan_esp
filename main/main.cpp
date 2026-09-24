@@ -35,8 +35,8 @@ extern "C" void app_main() {
     // Приоритет сортируется по возрастанию: 0 = первый, 255 = последний.
     // critical = true останавливает загрузку при ошибке; false — degraded mode.
 
-    // config — критичен: конфиг (AP, снапшоты) нужен всем; монтирует SPIFFS.
-    REGISTER_MODULE("config",  ConfigStore,         10, true);
+    // config — критичен: конфиг (AP, снапшоты) нужен всем; монтирует LittleFS /config.
+    REGISTER_MODULE("config",  ConfigStore,         10, true, "/config", "config");
     // comm — протокол/кадры/команды; подписывается на WS-события.
     REGISTER_MODULE("comm",    CommunicationModule, 20, false);
     // netctrl — владеет wifi + server (HTTP/WS/static). Некритичен: без сети

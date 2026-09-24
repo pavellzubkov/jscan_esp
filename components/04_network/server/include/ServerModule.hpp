@@ -1,7 +1,7 @@
 #pragma once
 #include "esp_http_server.h"
 #include "AppContext.h"
-#include "SpiffsService.hpp"
+#include "LittleFsService.hpp"
 
 class WsHandler;   // fwd, чтобы не тянуть WsHandler.hpp в include/
 
@@ -19,5 +19,5 @@ private:
     AppContext* ctx_;
     httpd_handle_t server_ = nullptr;
     WsHandler* ws_ = nullptr;
-    SpiffsService fs_;   // /spiffs, "storage"; смонтирована и ConfigStore'ом
+    LittleFsService fs_;   // /littlefs, "storage"; статика фронта
 };

@@ -7,7 +7,7 @@
 static const char* TAG = "ServerModule";
 
 ServerModule::ServerModule(AppContext* ctx)
-    : ctx_(ctx), fs_("/spiffs", "storage", false) {}
+    : ctx_(ctx), fs_("/littlefs", "storage", false) {}
 
 ServerModule::~ServerModule() {
     stop();
@@ -19,10 +19,10 @@ esp_err_t ServerModule::begin() {
         return ESP_OK;
     }
 
-    // Монтируем ФС (идемпотентно — конфиг уже смонтировал в ConfigStore::begin).
+    // Монтируем ФС (идемпотентно).
     esp_err_t ret = fs_.mount();
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to mount SPIFFS: %s", esp_err_to_name(ret));
+        ESP_LOGE(TAG, "Failed to mount LittleFS: %s", esp_err_to_name(ret));
         return ret;
     }
 
