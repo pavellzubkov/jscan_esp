@@ -14,7 +14,7 @@
 
 - [x] STEP-01 — Ядро реестра (01_core/common): AppTypes / DataFields.inc / AppData / FieldRegistry + AppContext
 - [x] STEP-02 — ConfigStore на реестре + factory reset (05_storage/config_store)
-- [ ] STEP-03 — Протокол: новые MsgType + CommModule (01_core/common, 04_network/communication)
+- [x] STEP-03 — Протокол: новые MsgType + CommModule (01_core/common, 04_network/communication)
 - [ ] STEP-04 — TWAI runtime + конфиг (02_hardware/twai, 03_systems/j1939_system)
 - [ ] STEP-05 — WifiApModule: live-apply + runtime-поля (04_network/wifi)
 - [ ] STEP-06 — SystemStatusModule (опционально, новый 03_systems/system_status)

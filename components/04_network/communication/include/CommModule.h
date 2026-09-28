@@ -21,4 +21,11 @@ private:
     void onWsClientConnected(const ws_message_t* msg);
     void onWsClientDisconnected(const ws_message_t* msg);
     void onWifiStatus(const wifi_status_event_t* s);
+    void onCommunicationSend(const communication_send_event_t* evt);
+
+    // --- Канал параметров ---
+    void sendFrame(uint16_t msgType, uint8_t flags,
+                   const uint8_t* payload, size_t payloadLen, int sockfd);
+    void sendValueFrame(uint16_t msgType, uint16_t uid, int sockfd);
+    void sendNack(uint16_t uid, uint8_t err, int sockfd);
 };

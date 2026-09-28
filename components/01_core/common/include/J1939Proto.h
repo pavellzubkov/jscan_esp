@@ -14,6 +14,12 @@ constexpr uint16_t kMinPacketSize = kHeaderSize + kCrcSize;
 constexpr uint8_t  kFlagSnapshot  = 0x20;
 constexpr uint16_t kMsgTypeSnapshot = 0x0001;
 constexpr uint16_t kMsgTypeRequest  = 0x0002;
+constexpr uint16_t kMsgTypeParamRequest = 0x0003;  // client→ESP: {uid u16 LE}
+constexpr uint16_t kMsgTypeParamSet     = 0x0004;  // client→ESP: {uid u16 LE, value}
+constexpr uint16_t kMsgTypeParamAck     = 0x0005;  // ESP→client: {uid u16 LE [, value]}
+constexpr uint16_t kMsgTypeParamNack    = 0x0006;  // ESP→client: {uid u16 LE, err u8}
+constexpr uint16_t kMsgTypeParamPush    = 0x0007;  // ESP→client: {uid u16 LE, value}
+constexpr uint16_t kMsgTypeFactoryReset = 0x0008;  // client→ESP: пустой payload
 constexpr uint16_t kJ1939MaxDataLen = 1785;  // 255 пакетов TP.DT * 7
 
 // Запись батча (один PGN).
