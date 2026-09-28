@@ -169,5 +169,18 @@ esp_err_t TwaiDriver::recover()
     return ESP_OK;
 }
 
+bool TwaiDriver::getStatus(Status& out) const
+{
+    if (node_ == nullptr)
+        return false;
+    twai_node_status_t st;
+    if (twai_node_get_info(node_, &st, nullptr) != ESP_OK)
+        return false;
+    out.state = static_cast<int>(st.state);
+    out.txErr = st.tx_error_count;
+    out.rxErr = st.rx_error_count;
+    return true;
+}
+
 QueueHandle_t TwaiDriver::rxReadyQueue() const { return rxReadyQueue_; }
 QueueHandle_t TwaiDriver::rxFreeQueue() const { return rxFreeQueue_; }

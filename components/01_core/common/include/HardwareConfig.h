@@ -3,12 +3,11 @@
 #include <cstdint>
 
 namespace Hw {
-// Адрес узла в J1939-сети.
-constexpr uint8_t  kJ1939MyAddr = 25;
 // Пины TWAI.
 constexpr gpio_num_t kCanTxGpio = GPIO_NUM_5;
 constexpr gpio_num_t kCanRxGpio = GPIO_NUM_4;
-// Битрейт J1939 (CAN 2.0B, 250 kbps).
+// Битрейт J1939 по умолчанию (CAN 2.0B, 250 kbps). Актуальное значение —
+// конфигурируемое поле canBitrate (AppData), применяется при перезагрузке.
 constexpr uint32_t kCanBitrate = 250000;
 // PGN служебных сообщений.
 constexpr uint32_t kPgnRequest   = 59904;   // RQST

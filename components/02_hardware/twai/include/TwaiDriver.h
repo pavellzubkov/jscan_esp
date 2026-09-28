@@ -27,8 +27,19 @@ public:
         uint8_t  data[8];
     };
 
+    // Рантайм-состояние шины (для телеметрии J1939System).
+    struct Status {
+        int      state;   // twai_error_state_t: ACTIVE/WARNING/PASSIVE/BUS_OFF
+        uint32_t txErr;   // TX error count
+        uint32_t rxErr;   // RX error count
+    };
+
     esp_err_t begin(const Config& cfg);
     void      end();
+
+    // Заполняет Status текущим состоянием узла через twai_node_get_info.
+    // Возвращает false, если узел не создан (begin не вызывался).
+    bool getStatus(Status& out) const;
 
     // Передача extended-кадра. Не блокирует навсегда: ждёт окончания передачи
     // до timeout (0 = не ждать). Колбэк/узел уже создан в begin.

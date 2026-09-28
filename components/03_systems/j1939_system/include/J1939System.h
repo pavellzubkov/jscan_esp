@@ -23,8 +23,15 @@ private:
     SnapshotAccumulator acc_;
     TaskHandle_t task_ = nullptr;
 
+    uint32_t twaiRecoverCount_ = 0;   // число авто-recover после BUS_OFF
+
     // Обработчик команды клиента «запросить PGN» (J1939_REQUEST)
     void onJ1939Request(const j1939_request_t* req);
+    // Применение TWAI-конфига по CONFIG_CHANGED (canNodeAddr/canTxTimeoutMs сразу,
+    // canBitrate — после перезагрузки, с валидацией набора {125/250/500/1000} кбит/с).
+    void onConfigChanged(const field_change_event_t* evt);
+    // Публикация runtime-полей twai* и activePgns (~1 раз в секунду).
+    void updateTwaiStatus();
 
     static void taskWrapper(void* p);
     void taskLoop();
