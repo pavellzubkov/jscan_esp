@@ -22,6 +22,9 @@ constexpr uint16_t kMsgTypeParamPush    = 0x0007;  // ESP→client: {uid u16 LE,
 constexpr uint16_t kMsgTypeFactoryReset = 0x0008;  // client→ESP: пустой payload
 constexpr uint16_t kJ1939MaxDataLen = 1785;  // 255 пакетов TP.DT * 7
 
+// Максимальная длина payload батча J1939_SNAPSHOT (PROTOCOL §7).
+constexpr size_t   kMaxBatchPayload = 8192;
+
 // Запись батча (один PGN).
 struct BatchRecord {
     uint8_t       sa;

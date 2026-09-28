@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstring>
 #include "AppTypes.h"
+#include "HardwareConfig.h"
 
 // ================================================================
 // Реестр полей системы: доменные .inc-файлы включены явно, чтобы
@@ -58,7 +59,7 @@ struct FieldMeta {
     size_t size;
     bool isConfig;
     bool readonly;
-    uint8_t  validator;  // CFG_STRING / CFG_INT / CFG_UINT / CFG_FLOAT / CFG_ENUM / CFG_IP / CFG_BOOL
+    uint8_t  validator;  // CFG_STRING / CFG_INT / CFG_UINT / CFG_FLOAT / CFG_ENUM / CFG_IP / CFG_BOOL / CFG_PASSWORD
     double   minVal;
     double   maxVal;
     FieldDomain domain;  // домен/владелец поля (для контроля владения записи)

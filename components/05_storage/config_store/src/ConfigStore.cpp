@@ -42,7 +42,8 @@ static bool jsonToWireValue(const FieldMeta& meta, const cJSON* item,
                             uint8_t* out, size_t cap, size_t* outLen) {
     switch (meta.validator) {
         case CFG_STRING:
-        case CFG_IP: {
+        case CFG_IP:
+        case CFG_PASSWORD: {
             if (!cJSON_IsString(item)) return false;
             size_t sl = strlen(item->valuestring);
             if (sl > 255 || cap < 1 + sl) return false;
@@ -296,7 +297,8 @@ cJSON* ConfigStore::buildFieldsJson() {
 
         switch (meta.validator) {
             case CFG_STRING:
-            case CFG_IP: {
+            case CFG_IP:
+            case CFG_PASSWORD: {
                 const FixedString* fs = reinterpret_cast<const FixedString*>(src);
                 cJSON_AddStringToObject(obj, meta.name, fs->c_str());
                 break;

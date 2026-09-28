@@ -4,10 +4,10 @@
 DATA_FIELD(FixedString, apSsid,           "J1939_AP",  1, 31, CFG_STRING, true, false)
 
 // @label Пароль AP
-// @description Пароль точки доступа (пустой = открытая сеть)
+// @description Пароль точки доступа (пустой = открытая сеть, иначе 8..63 символа)
 // @group Access Point
 // @sensitive true
-DATA_FIELD(FixedString, apPassword,       "12345678",  0, 31, CFG_STRING, true, false)
+DATA_FIELD(FixedString, apPassword,       "12345678",  0, 63, CFG_PASSWORD, true, false)
 
 // @label Канал AP
 // @description Радиоканал точки доступа

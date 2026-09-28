@@ -1,5 +1,6 @@
 #pragma once
 #include "esp_event_base.h"
+#include "J1939Proto.h"
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -21,10 +22,8 @@ enum class app_event_id_t : int32_t {
     OTA_END                 // конец OTA: flash-операции завершены (без данных)
 };
 
-// Максимальная длина WS-сообщения (батч снапшота до 8 КБ).
-constexpr size_t kMaxWsMessageLen = 8192;
-// Максимальный батч-пейлоад (payload кадра J1939_SNAPSHOT).
-constexpr size_t kMaxBatchPayload = 8192;
+// Максимальная длина WS-сообщения = лимит батча снапшота (см. J1939Proto).
+constexpr size_t kMaxWsMessageLen = J1939Proto::kMaxBatchPayload;
 
 struct ws_message_t {
     int  sockfd;   // -1 = broadcast

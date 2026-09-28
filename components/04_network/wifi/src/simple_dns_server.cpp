@@ -33,34 +33,46 @@ DnsServer::DnsServer(uint32_t redirect_ip) {
 
 bool DnsServer::start(uint16_t port, int stack_size, UBaseType_t prio) {
     if (running_.load()) return true;
-    
+
     port_ = port;
+
+    doneSem_ = xSemaphoreCreateBinary();
+    if (!doneSem_) return false;
+
     running_.store(true);
-    
+
     BaseType_t result = xTaskCreate(taskTrampoline, "dns_server", stack_size, this, prio, &task_);
     if (result != pdPASS) {
         running_.store(false);
+        vSemaphoreDelete(doneSem_);
+        doneSem_ = nullptr;
         return false;
     }
-    
+
     return true;
 }
 
 void DnsServer::stop() {
     if (!running_.load()) return;
-    
+
     running_.store(false);
-    
+
     // Закрываем сокет для выхода из блокирующего recvfrom
     if (sock_ >= 0) {
         close(sock_);
         sock_ = -1;
     }
-    
-    // Ждем завершения задачи
-    if (task_) {
-        vTaskDelay(100 / portTICK_PERIOD_MS);
+
+    // Ждем завершения задачи (задача даёт doneSem_ перед vTaskDelete).
+    // Без этого delete dns_ в WifiApModule может застать run() живым (UAF).
+    if (task_ && doneSem_) {
+        xSemaphoreTake(doneSem_, 2000 / portTICK_PERIOD_MS);
         task_ = nullptr;
+    }
+
+    if (doneSem_) {
+        vSemaphoreDelete(doneSem_);
+        doneSem_ = nullptr;
     }
 }
 
@@ -73,6 +85,7 @@ void DnsServer::run() {
     if (sock_ < 0) {
         ESP_LOGE(TAG_DNS, "Socket creation failed: %d", errno);
         running_.store(false);
+        if (doneSem_) xSemaphoreGive(doneSem_);
         vTaskDelete(nullptr);
         return;
     }
@@ -93,6 +106,7 @@ void DnsServer::run() {
         close(sock_);
         sock_ = -1;
         running_.store(false);
+        if (doneSem_) xSemaphoreGive(doneSem_);
         vTaskDelete(nullptr);
         return;
     }
@@ -131,6 +145,7 @@ void DnsServer::run() {
     
     ESP_LOGI(TAG_DNS, "DNS Server stopped");
     running_.store(false);
+    if (doneSem_) xSemaphoreGive(doneSem_);
     vTaskDelete(nullptr);
 }
 

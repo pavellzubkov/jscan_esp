@@ -14,9 +14,10 @@ inline constexpr uint16_t fieldUid(const char* name) {
     return static_cast<uint16_t>(fnv1a32(name) & 0xFFFFu);
 }
 
-// Фиксированные строки вместо std::string.
+// Фиксированные строки вместо std::string. Буфер 64 байта покрывает
+// максимальный WPA2-пароль (8..63 символа) для apPassword.
 struct FixedString {
-  char data[32];
+  char data[64];
 
   constexpr FixedString(const char *str = "") : data{} {
     if (str) {
@@ -48,3 +49,4 @@ enum class FieldDomain : uint8_t {
 #define CFG_ENUM 4
 #define CFG_IP 5
 #define CFG_BOOL 6
+#define CFG_PASSWORD 7   // WPA2-пароль: пустой или 8..63 символа

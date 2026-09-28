@@ -1,6 +1,6 @@
 #include "StaticHandler.hpp"
 #include "HttpCommon.hpp"
-#include "HardwareConfig.h"
+#include "AppContext.h"
 #include "esp_log.h"
 #include "esp_vfs.h"
 #include <cstring>
@@ -104,14 +104,18 @@ static void build_filepath(static_ctx_t* ctx, const char* uri,
 // Ультра-агрессивный captive-перехват. Работает безусловно: сеть jscan всегда
 // работает как softAP (нет STA-режима), поэтому редирект на портал всегда уместен.
 static esp_err_t is_captive(httpd_req_t* req) {
-    // IP портала — из HardwareConfig (единый источник правды, не хардкод строки).
+    // IP портала — из конфигурации apIp (может меняться по протоколу), а не
+    // хардкод. global_user_ctx задаёт ServerModule::begin (AppContext).
+    AppContext* app =
+        static_cast<AppContext*>(httpd_get_global_user_ctx(req->handle));
+    FixedString apIpStr;
+    if (!app || !app->fields.getByName("apIp", apIpStr)) {
+        ESP_LOGW(TAG, "apIp unavailable, captive disabled");
+        return ESP_FAIL;
+    }
+
     char ap_ip[16];
-    uint32_t a = Hw::kApIp;
-    snprintf(ap_ip, sizeof(ap_ip), "%u.%u.%u.%u",
-             static_cast<unsigned>((a >> 24) & 0xFF),
-             static_cast<unsigned>((a >> 16) & 0xFF),
-             static_cast<unsigned>((a >> 8) & 0xFF),
-             static_cast<unsigned>(a & 0xFF));
+    strlcpy(ap_ip, apIpStr.data, sizeof(ap_ip));
 
     char portal_root[48];
     char portal_captive[64];

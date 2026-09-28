@@ -3,6 +3,8 @@
 #include <cstdint>
 
 namespace Hw {
+// Версия прошивки — единый источник (дефолт SystemFields.inc + writeFieldScalar).
+constexpr const char* kFwVersion = "1.0.0";
 // Пины TWAI.
 constexpr gpio_num_t kCanTxGpio = GPIO_NUM_5;
 constexpr gpio_num_t kCanRxGpio = GPIO_NUM_4;

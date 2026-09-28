@@ -1,5 +1,6 @@
 #include "SystemStatusModule.h"
 
+#include "HardwareConfig.h"
 #include "esp_log.h"
 #include "esp_system.h"
 #include "esp_timer.h"
@@ -29,7 +30,7 @@ esp_err_t SystemStatusModule::begin()
     ctx_->fields.setDynamicReader(&SystemStatusModule::readDynamicSystemField);
 
     // fwVersion — статично, пишется один раз при старте.
-    ctx_->fields.writeFieldScalar(fwVersion_UID, FixedString("1.0.0"));
+    ctx_->fields.writeFieldScalar(fwVersion_UID, FixedString(Hw::kFwVersion));
 
     ESP_LOGI(TAG, "started (SYSTEM fields computed on read)");
     return ESP_OK;

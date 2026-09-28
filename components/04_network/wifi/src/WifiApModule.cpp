@@ -126,15 +126,29 @@ esp_err_t WifiApModule::begin() {
     }
 
     started_ = true;
+
+    FixedString apSsid;
+    uint8_t apChannel = 6, maxStaConn = 2;
+    ctx_->fields.getByName("apSsid", apSsid);
+    ctx_->fields.getByName("apChannel", apChannel);
+    ctx_->fields.getByName("maxStaConn", maxStaConn);
     ESP_LOGI(TAG, "softAP started: ssid=%s channel=%u maxSta=%u",
-             ctx_->adata.apSsid, ctx_->adata.apChannel,
-             ctx_->adata.maxStaConn);
+             apSsid.data, apChannel, maxStaConn);
     return ESP_OK;
 }
 
 esp_err_t WifiApModule::applyConfig() {
+    // Конфиг AP читаем через реестр полей (под локом) — единая точка доступа.
+    FixedString apIp, apSsid, apPassword;
+    uint8_t apChannel = 6, maxStaConn = 2;
+    ctx_->fields.getByName("apIp", apIp);
+    ctx_->fields.getByName("apSsid", apSsid);
+    ctx_->fields.getByName("apPassword", apPassword);
+    ctx_->fields.getByName("apChannel", apChannel);
+    ctx_->fields.getByName("maxStaConn", maxStaConn);
+
     // Статический IP точки доступа из конфигурации (apIp).
-    const uint32_t ip = parseIp(ctx_->adata.apIp);
+    const uint32_t ip = parseIp(apIp.data);
     esp_netif_ip_info_t ipInfo = {};
     ipInfo.ip.addr      = ip;
     ipInfo.gw.addr      = ip;
@@ -143,17 +157,17 @@ esp_err_t WifiApModule::applyConfig() {
     esp_netif_set_ip_info(netif_, &ipInfo);
     esp_netif_dhcps_start(netif_);
 
-    // Конфигурация AP из ctx->adata (пишет ConfigStore).
+    // Конфигурация AP из AppData (пишет ConfigStore).
     wifi_config_t wifiConfig = {};
     strlcpy(reinterpret_cast<char*>(wifiConfig.ap.ssid),
-            ctx_->adata.apSsid, sizeof wifiConfig.ap.ssid);
+            apSsid.data, sizeof wifiConfig.ap.ssid);
     strlcpy(reinterpret_cast<char*>(wifiConfig.ap.password),
-            ctx_->adata.apPassword, sizeof wifiConfig.ap.password);
-    wifiConfig.ap.channel = ctx_->adata.apChannel;
-    wifiConfig.ap.max_connection = ctx_->adata.maxStaConn;
+            apPassword.data, sizeof wifiConfig.ap.password);
+    wifiConfig.ap.channel = apChannel;
+    wifiConfig.ap.max_connection = maxStaConn;
     wifiConfig.ap.authmode =
-        (ctx_->adata.apPassword.data[0] != '\0') ? WIFI_AUTH_WPA2_PSK
-                                                 : WIFI_AUTH_OPEN;
+        (apPassword.data[0] != '\0') ? WIFI_AUTH_WPA2_PSK
+                                     : WIFI_AUTH_OPEN;
 
     esp_err_t ret = esp_wifi_set_config(WIFI_IF_AP, &wifiConfig);
     if (ret != ESP_OK) {

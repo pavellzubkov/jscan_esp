@@ -16,7 +16,7 @@ struct AppContext {
     // Реестр полей с контролем владения (обёртка над adata).
     FieldRegistry fields;
 
-    AppContext() : fields(adata) {}
+    AppContext() : fields(adata, adataMutex) {}
     ~AppContext() {
         events.shutdown();            // снять подписки ДО удаления loop
         if (event_loop) esp_event_loop_delete(event_loop);

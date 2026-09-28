@@ -79,7 +79,8 @@ void SnapshotAccumulator::update(uint32_t sa, uint32_t pgn,
             return;
         // Вытесняем запись — освобождаем её длинный буфер
         Record& victim = records_[idx];
-        if (victim.valid && victim.bigData)
+        const bool wasValid = victim.valid;
+        if (wasValid && victim.bigData)
         {
             free(victim.bigData);
             victim.bigData = nullptr;
@@ -89,7 +90,11 @@ void SnapshotAccumulator::update(uint32_t sa, uint32_t pgn,
         victim.lastTsMs = 0;
         victim.periodMs = 0;
         victim.valid = true;
-        count_++;
+        // Счётчик растёт только при занятии свободного слота; при вытеснении
+        // живой записи число записей не меняется (иначе count_ утекал бы за
+        // kMaxRecords и активPgns/телефония уходили бы в OUT_OF_RANGE).
+        if (!wasValid)
+            count_++;
     }
 
     Record& r = records_[idx];

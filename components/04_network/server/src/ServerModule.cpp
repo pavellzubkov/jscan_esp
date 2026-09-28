@@ -71,14 +71,17 @@ esp_err_t ServerModule::begin() {
 }
 
 void ServerModule::stop() {
-    if (ws_) {
-        ws_->unreg();
-        delete ws_;
-        ws_ = nullptr;
-    }
+    // Сначала полностью останавливаем httpd (завершает все задачи/сокеты),
+    // затем удаляем WsHandler. Иначе httpd-задачи могут вызывать ws-хендлер
+    // после delete ws_ (UAF).
     if (server_) {
         httpd_stop(server_);
         server_ = nullptr;
         ESP_LOGI(TAG, "HTTP server stopped");
+    }
+    if (ws_) {
+        ws_->unreg();
+        delete ws_;
+        ws_ = nullptr;
     }
 }

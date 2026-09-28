@@ -5,7 +5,9 @@
 #include "SnapshotAccumulator.h"
 #include "TwaiDriver.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
 #include "freertos/task.h"
+#include <atomic>
 
 // Координатор J1939: владеет драйвером TWAI, декодером, TP и аккумулятором.
 // Одна задача: приём кадров + публикация снапшотов по таймеру.
@@ -23,10 +25,23 @@ private:
     SnapshotAccumulator acc_;
     TaskHandle_t task_ = nullptr;
 
+    // Очередь RQST от клиентов (J1939_REQUEST): событие (event-loop) только
+    // ставит запрос, TX с блокировкой до canTxTimeoutMs выполняется в taskLoop.
+    QueueHandle_t reqQueue_ = nullptr;
+
     uint32_t twaiRecoverCount_ = 0;   // число авто-recover после BUS_OFF
 
-    // Обработчик команды клиента «запросить PGN» (J1939_REQUEST)
+    // Число подключённых WS-клиентов: при 0 не строим и не шлём батч.
+    std::atomic<int> wsClients_{0};
+
+    // Обработчик команды клиента «запросить PGN» (J1939_REQUEST): только
+    // кладёт запрос в reqQueue_ (не блокирует event loop).
     void onJ1939Request(const j1939_request_t* req);
+    // Фактическая отправка RQST (вызывается из taskLoop).
+    void sendRequest(const j1939_request_t& req);
+    // Счётчик WS-клиентов (подписка на WS_CLIENT_CONNECTED/DISCONNECTED).
+    void onWsClientConnected(const ws_message_t* msg);
+    void onWsClientDisconnected(const ws_message_t* msg);
     // Применение TWAI-конфига по CONFIG_CHANGED (canNodeAddr/canTxTimeoutMs сразу,
     // canBitrate — после перезагрузки, с валидацией набора {125/250/500/1000} кбит/с).
     void onConfigChanged(const field_change_event_t* evt);

@@ -2,6 +2,7 @@
 #include "AppTypes.h"
 #include "esp_log.h"
 #include <cstring>
+#include <mutex>
 
 static const char* TAG = "FieldRegistry";
 
@@ -12,7 +13,8 @@ static const char* TAG = "FieldRegistry";
 
 // Размер сериализованного представления одного поля (без padding; строки — с префиксом длины).
 static size_t serializedFieldSize(const FieldMeta* meta, const AppData* data) {
-    if (meta->validator == CFG_STRING || meta->validator == CFG_IP) {
+    if (meta->validator == CFG_STRING || meta->validator == CFG_IP ||
+        meta->validator == CFG_PASSWORD) {
         const FixedString* fs = reinterpret_cast<const FixedString*>(
             reinterpret_cast<const uint8_t*>(data) + meta->offset);
         size_t sl = strnlen(fs->data, sizeof(fs->data));
@@ -24,7 +26,8 @@ static size_t serializedFieldSize(const FieldMeta* meta, const AppData* data) {
 
 static size_t serializeField(const FieldMeta* meta, const AppData* data, uint8_t* out) {
     const uint8_t* src = reinterpret_cast<const uint8_t*>(data) + meta->offset;
-    if (meta->validator == CFG_STRING || meta->validator == CFG_IP) {
+    if (meta->validator == CFG_STRING || meta->validator == CFG_IP ||
+        meta->validator == CFG_PASSWORD) {
         const FixedString* fs = reinterpret_cast<const FixedString*>(src);
         size_t sl = strnlen(fs->data, sizeof(fs->data));
         if (sl > 255) sl = 255;
@@ -53,10 +56,13 @@ static int64_t readSignedLE(const uint8_t* p, size_t n) {
 
 static bool valueInRange(const FieldMeta* meta, const uint8_t* payload, size_t payloadLen,
                          double minVal, double maxVal) {
-    if (meta->validator == CFG_STRING || meta->validator == CFG_IP) {
+    if (meta->validator == CFG_STRING || meta->validator == CFG_IP ||
+        meta->validator == CFG_PASSWORD) {
         if (payloadLen < 1) return false;
         uint8_t sl = payload[0];
         if (sl != payloadLen - 1) return false;          // длина не совпадает
+        if (meta->validator == CFG_PASSWORD)
+            return (sl == 0) || ((sl >= 8) && (sl <= maxVal));  // пустой или 8..63
         return (sl >= minVal) && (sl <= maxVal);
     }
     if (meta->validator == CFG_FLOAT) {
@@ -77,7 +83,8 @@ static bool valueInRange(const FieldMeta* meta, const uint8_t* payload, size_t p
 static bool deserializeField(const FieldMeta* meta, AppData* data,
                              const uint8_t* payload, size_t payloadLen) {
     uint8_t* dst = reinterpret_cast<uint8_t*>(data) + meta->offset;
-    if (meta->validator == CFG_STRING || meta->validator == CFG_IP) {
+    if (meta->validator == CFG_STRING || meta->validator == CFG_IP ||
+        meta->validator == CFG_PASSWORD) {
         if (payloadLen < 1) return false;
         uint8_t sl = payload[0];
         if (sl != payloadLen - 1) return false;
@@ -97,7 +104,8 @@ static bool deserializeField(const FieldMeta* meta, AppData* data,
 // FieldRegistry
 // ============================================================
 
-FieldRegistry::FieldRegistry(AppData& data) : data_(data) {}
+FieldRegistry::FieldRegistry(AppData& data, std::recursive_mutex& mutex)
+    : data_(data), mutex_(mutex) {}
 
 const FieldMeta* FieldRegistry::getMetaByUid(uint16_t uid) const {
     if (uid == FULL_ID) return nullptr;  // 0xFFFF зарезервирован — не валидный UID поля
@@ -129,6 +137,7 @@ void FieldRegistry::setDynamicReader(FieldDynamicReader reader) {
 
 bool FieldRegistry::readField(uint16_t uid, void* out, size_t out_cap,
                               size_t* out_len) const {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     const FieldMeta* meta = getMetaByUid(uid);
     if (!meta) return false;
 
@@ -149,8 +158,19 @@ bool FieldRegistry::readField(uint16_t uid, void* out, size_t out_cap,
     return true;
 }
 
+bool FieldRegistry::readFieldRaw(uint16_t uid, void* out, size_t out_cap) const {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    const FieldMeta* meta = getMetaByUid(uid);
+    if (!meta) return false;
+    if (meta->size > out_cap) return false;
+    memcpy(out, reinterpret_cast<const uint8_t*>(&data_) + meta->offset,
+           meta->size);
+    return true;
+}
+
 FieldWriteStatus FieldRegistry::writeField(uint16_t uid, const void* value,
                                             size_t len, FieldDomain owner) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     const FieldMeta* meta = getMetaByUid(uid);
     if (!meta) return FieldWriteStatus::UNKNOWN_UID;
 

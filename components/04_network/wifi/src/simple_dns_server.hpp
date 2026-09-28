@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 #include <freertos/task.h>
 #include <lwip/sockets.h>
 
@@ -21,6 +22,7 @@ private:
 
     std::atomic<bool> running_{false};
     TaskHandle_t task_{nullptr};
+    SemaphoreHandle_t doneSem_{nullptr};   // сигнал о завершении задачи в run()
     int sock_{-1};
     uint16_t port_{53};
     uint32_t redirect_addr_;

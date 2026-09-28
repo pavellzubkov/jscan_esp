@@ -1,7 +1,7 @@
 // @label Версия FW
 // @description Версия прошивки
 // @group System
-DATA_FIELD(FixedString, fwVersion,        "1.0.0", 1, 15, CFG_STRING, false, true)
+DATA_FIELD(FixedString, fwVersion,        Hw::kFwVersion, 1, 15, CFG_STRING, false, true)
 
 // @label Аптайм
 // @description Время работы с момента загрузки

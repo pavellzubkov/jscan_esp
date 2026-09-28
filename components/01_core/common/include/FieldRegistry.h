@@ -3,6 +3,7 @@
 #include "AppTypes.h"
 #include <cstddef>
 #include <cstdint>
+#include <mutex>
 
 // Опциональный провайдер «динамических» runtime-полей: вычисляет значение
 // на лету в момент чтения (uptimeMs/heapFree и т.п.), вместо хранения в
@@ -30,9 +31,11 @@ enum class FieldWriteStatus : uint8_t {
 // писать любой валидный пишущий (протокол, автосейв, UI).
 //
 // Реализация не хранит данные — она оборачивает AppData и g_fieldMeta.
+// Все операции чтения/записи AppData выполняются под рекурсивным мьютексом
+// AppContext.adataMutex (вложенные AppDataLock остаются корректными).
 class FieldRegistry {
  public:
-    explicit FieldRegistry(AppData& data);
+    explicit FieldRegistry(AppData& data, std::recursive_mutex& mutex);
 
     // --- Метаданные схемы ---
     const FieldMeta* getMetaByUid(uint16_t uid) const;
@@ -51,6 +54,11 @@ class FieldRegistry {
     bool readField(uint16_t uid, void* out, size_t out_cap,
                    size_t* out_len) const;
 
+    // Копирует «сырое» значение поля (без сериализации) в out. Для строк —
+    // сам FixedString целиком. Выполняется под локом. Возвращает false, если
+    // поля нет или out_cap мал.
+    bool readFieldRaw(uint16_t uid, void* out, size_t out_cap) const;
+
     // --- Запись (с валидацией и проверкой владельца) ---
     // value — сериализованное значение (см. PROTOCOL.md §2), len — его длина.
     // owner — домен пишущего (FieldDomain::WIFI/...); для протокола,
@@ -59,12 +67,12 @@ class FieldRegistry {
     FieldWriteStatus writeField(uint16_t uid, const void* value,
                                 size_t len, FieldDomain owner);
 
-    // Type-safe чтение по имени (удобство).
+    // Type-safe чтение «сырого» значения по имени (удобство).
     template <typename T>
     bool getByName(const char* name, T& out) const {
         const FieldMeta* m = getMetaByName(name);
         if (!m || m->size != sizeof(T)) return false;
-        return readField(m->uid, &out, sizeof(T), nullptr);
+        return readFieldRaw(m->uid, &out, sizeof(T));
     }
 
     // Запись типизированного (native, little-endian) скалярного значения.
@@ -79,5 +87,6 @@ class FieldRegistry {
 
  private:
     AppData& data_;
+    std::recursive_mutex& mutex_;   // AppContext.adataMutex (рекурсивный)
     FieldDynamicReader dynamicReader_ = nullptr;
 };
