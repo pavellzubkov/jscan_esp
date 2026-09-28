@@ -74,17 +74,17 @@ esp_err_t WifiApModule::begin() {
     esp_netif_set_ip_info(netif_, &ipInfo);
     esp_netif_dhcps_start(netif_);
 
-    // Конфигурация AP из ctx->config (пишет ConfigStore).
+    // Конфигурация AP из ctx->adata (пишет ConfigStore).
     wifi_config_t wifiConfig = {};
     strlcpy(reinterpret_cast<char*>(wifiConfig.ap.ssid),
-            ctx_->config.apSsid, sizeof wifiConfig.ap.ssid);
+            ctx_->adata.apSsid, sizeof wifiConfig.ap.ssid);
     strlcpy(reinterpret_cast<char*>(wifiConfig.ap.password),
-            ctx_->config.apPassword, sizeof wifiConfig.ap.password);
-    wifiConfig.ap.channel = ctx_->config.apChannel;
-    wifiConfig.ap.max_connection = ctx_->config.maxStaConn;
+            ctx_->adata.apPassword, sizeof wifiConfig.ap.password);
+    wifiConfig.ap.channel = ctx_->adata.apChannel;
+    wifiConfig.ap.max_connection = ctx_->adata.maxStaConn;
     wifiConfig.ap.authmode =
-        (ctx_->config.apPassword[0] != '\0') ? WIFI_AUTH_WPA2_PSK
-                                             : WIFI_AUTH_OPEN;
+        (ctx_->adata.apPassword.data[0] != '\0') ? WIFI_AUTH_WPA2_PSK
+                                                 : WIFI_AUTH_OPEN;
 
     ret = esp_wifi_set_mode(WIFI_MODE_AP);
     if (ret != ESP_OK) {
@@ -104,8 +104,8 @@ esp_err_t WifiApModule::begin() {
 
     started_ = true;
     ESP_LOGI(TAG, "softAP started: ssid=%s channel=%u maxSta=%u",
-             ctx_->config.apSsid, ctx_->config.apChannel,
-             ctx_->config.maxStaConn);
+             ctx_->adata.apSsid, ctx_->adata.apChannel,
+             ctx_->adata.maxStaConn);
 
     // Запуск DNS-сервера (captive portal): все DNS-запросы клиентов AP
     // резолвятся на IP точки доступа, где их перехватит HTTP-редирект.

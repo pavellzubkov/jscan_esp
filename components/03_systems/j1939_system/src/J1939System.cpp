@@ -108,7 +108,7 @@ void J1939System::taskLoop()
         if ((int32_t)(now - nextSnapshot) >= 0)   // тик-безопасное сравнение
         {
             sendSnapshot(now);
-            nextSnapshot = now + ctx_->config.snapshotIntervalMs;
+            nextSnapshot = now + ctx_->adata.snapshotIntervalMs;
         }
     }
 }
@@ -141,7 +141,7 @@ void J1939System::processAssembled(const J1939AssembledMsg& msg, uint32_t nowMs)
 void J1939System::sendSnapshot(uint32_t nowMs)
 {
     const SnapshotAccumulator::Record* recs = nullptr;
-    const size_t n = acc_.collect(recs, nowMs, ctx_->config.snapshotTtlMs);
+    const size_t n = acc_.collect(recs, nowMs, ctx_->adata.snapshotTtlMs);
     if (n == 0)
         return;   // нет активных записей — пустой батч не шлём
 

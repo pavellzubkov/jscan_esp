@@ -6,7 +6,7 @@
 
 class DnsServer;
 
-// SoftAP-точка доступа. Конфиг (ssid/pass/channel/maxStaConn) из ctx->config.
+// SoftAP-точка доступа. Конфиг (ssid/pass/channel/maxStaConn) из ctx->adata.
 // Публикует WIFI_STATUS на событиях AP_STACONNECTED/AP_STADISCONNECTED.
 // Владеет жизненным циклом DNS-сервера captive portal (весь DNS → IP AP).
 class WifiApModule {

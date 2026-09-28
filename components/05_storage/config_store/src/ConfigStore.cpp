@@ -1,6 +1,9 @@
 #include "ConfigStore.h"
+#include "AppData.h"
+#include "LogicUtils.h"
 #include "cJSON.h"
 #include "esp_log.h"
+#include "esp_system.h"
 #include "nvs_flash.h"
 #include <cstdio>
 #include <cstdlib>
@@ -8,18 +11,145 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <vector>
 
 static const char* TAG = "ConfigStore";
 
-// Валидное числовое значение из JSON-узла в диапазоне [lo..hi],
-// иначе — значение по умолчанию (дефолт из структуры AppConfig).
-static uint32_t clampU32(const cJSON* item, uint32_t lo, uint32_t hi,
-                         uint32_t def) {
-    if (!cJSON_IsNumber(item)) return def;
-    double v = item->valuedouble;
-    if (v < static_cast<double>(lo) || v > static_cast<double>(hi)) return def;
-    return static_cast<uint32_t>(v);
+// ============================================================
+// Вспомогательные функции (сериализация little-endian)
+// ============================================================
+
+static uint64_t readUnsignedLE(const uint8_t* p, size_t n) {
+    uint64_t v = 0;
+    for (size_t i = 0; i < n; ++i) v |= (uint64_t)p[i] << (8 * i);
+    return v;
 }
+
+static int64_t readSignedLE(const uint8_t* p, size_t n) {
+    uint64_t v = readUnsignedLE(p, n);
+    if (n < 8) {
+        bool neg = v & (uint64_t(1) << (8 * n - 1));
+        if (neg) v |= ~((uint64_t(1) << (8 * n)) - 1);
+    }
+    return static_cast<int64_t>(v);
+}
+
+// ============================================================
+// JSON-слой: значение JSON → wire (PROTOCOL §2) → FieldRegistry
+// ============================================================
+
+static bool jsonToWireValue(const FieldMeta& meta, const cJSON* item,
+                            uint8_t* out, size_t cap, size_t* outLen) {
+    switch (meta.validator) {
+        case CFG_STRING:
+        case CFG_IP: {
+            if (!cJSON_IsString(item)) return false;
+            size_t sl = strlen(item->valuestring);
+            if (sl > 255 || cap < 1 + sl) return false;
+            out[0] = static_cast<uint8_t>(sl);
+            memcpy(out + 1, item->valuestring, sl);
+            *outLen = 1 + sl;
+            return true;
+        }
+        case CFG_FLOAT: {
+            if (!cJSON_IsNumber(item)) return false;
+            if (cap < sizeof(float)) return false;
+            float f = static_cast<float>(item->valuedouble);
+            memcpy(out, &f, sizeof(float));
+            *outLen = sizeof(float);
+            return true;
+        }
+        case CFG_INT: {
+            if (!cJSON_IsNumber(item)) return false;
+            int64_t v = static_cast<int64_t>(item->valuedouble);
+            if (meta.size > sizeof(uint64_t) || cap < meta.size) return false;
+            for (size_t i = 0; i < meta.size; ++i) {
+                out[i] = static_cast<uint8_t>(static_cast<uint64_t>(v) >> (8 * i));
+            }
+            *outLen = meta.size;
+            return true;
+        }
+        case CFG_UINT:
+        case CFG_ENUM:
+        case CFG_BOOL: {
+            if (!cJSON_IsNumber(item)) return false;
+            double d = item->valuedouble;
+            if (d < 0) return false;
+            uint64_t v = static_cast<uint64_t>(d);
+            if (meta.size > sizeof(uint64_t) || cap < meta.size) return false;
+            for (size_t i = 0; i < meta.size; ++i) {
+                out[i] = static_cast<uint8_t>(v >> (8 * i));
+            }
+            *outLen = meta.size;
+            return true;
+        }
+        default:
+            return false;
+    }
+}
+
+// Применить поля из JSON-объекта по именам (getMetaByName). Неизвестные
+// ключи игнорируются — соответствующие поля остаются на дефолтах (решение #4).
+// changed != nullptr — собирает UID реально изменившихся полей.
+// trustedRestore=true — данные пришли с самого устройства (файл): runtime-поля
+// восстанавливаются владельцем домена. false — извне (протокол): readonly-поля
+// отклоняются (FieldWriteStatus::READONLY_DENIED).
+static bool applyFieldsToCtx(AppContext* ctx, const cJSON* fields,
+                             std::vector<uint16_t>* changed,
+                             bool trustedRestore) {
+    if (!fields || !cJSON_IsObject(fields)) return false;
+
+    AppDataLock dataLock(ctx);  // защита многополевой записи в adata
+
+    bool anyApplied = false;
+    const cJSON* item = nullptr;
+    cJSON_ArrayForEach(item, fields) {
+        if (!item->string) continue;
+
+        const FieldMeta* meta = ctx->fields.getMetaByName(item->string);
+        if (!meta) {
+            ESP_LOGW(TAG, "Unknown field in config JSON: %s", item->string);
+            continue;
+        }
+        if (!meta->isConfig) continue;  // runtime-поля файлом не восстанавливаем
+
+        uint8_t wire[kAppMaxFieldSize];
+        size_t len = 0;
+        if (!jsonToWireValue(*meta, item, wire, sizeof(wire), &len)) {
+            ESP_LOGW(TAG, "Bad JSON value for field %s", meta->name);
+            continue;
+        }
+
+        uint8_t oldBuf[kAppMaxFieldSize];
+        size_t oldLen = 0;
+        ctx->fields.readField(meta->uid, oldBuf, sizeof(oldBuf), &oldLen);
+
+        FieldWriteStatus st =
+            ctx->fields.writeField(meta->uid, wire, len,
+                                   trustedRestore ? meta->domain
+                                                  : FieldDomain::PROTOCOL);
+        if (st != FieldWriteStatus::OK) {
+            ESP_LOGW(TAG, "Field rejected on config apply: %s (status=%d)",
+                     meta->name, static_cast<int>(st));
+            continue;
+        }
+        anyApplied = true;
+
+        if (changed) {
+            uint8_t newBuf[kAppMaxFieldSize];
+            size_t newLen = 0;
+            ctx->fields.readField(meta->uid, newBuf, sizeof(newBuf), &newLen);
+            if (oldLen != newLen || memcmp(oldBuf, newBuf, oldLen) != 0) {
+                changed->push_back(meta->uid);
+            }
+        }
+    }
+    return anyApplied;
+}
+
+// ============================================================
+// ConfigStore
+// ============================================================
 
 ConfigStore::ConfigStore(AppContext* ctx, const char* basePath,
                          const char* partitionLabel)
@@ -56,6 +186,9 @@ esp_err_t ConfigStore::begin() {
         return err;
     }
 
+    // Базовые дефолты до применения файла (AppData не имеет member-инициализаторов).
+    initAppDataDefault(ctx_->adata);
+
     loadFromFs();
 
     if (xTaskCreate(autoSaveWrapper, "cfg_autosave", 4096, this, 3, &task_) !=
@@ -64,18 +197,23 @@ esp_err_t ConfigStore::begin() {
         task_ = nullptr;
         return ESP_FAIL;
     }
+
+    // dirty_ ставится подписчиком CONFIG_CHANGED: автосейв сохранит JSON при
+    // следующем тике. Также ловим FACTORY_RESET → сброс + рестарт.
+    ctx_->events.subscribe(APP_EVENTS_BASE, app_event_id_t::CONFIG_CHANGED,
+                           &ConfigStore::onConfigChanged, this);
+    ctx_->events.subscribe(APP_EVENTS_BASE, app_event_id_t::FACTORY_RESET,
+                           &ConfigStore::reset, this);
+
     ESP_LOGI(TAG, "ConfigStore started (littlefs: %s)",
              partitionLabel_.c_str());
     return ESP_OK;
 }
 
-void ConfigStore::setAndSave(const AppConfig& next) {
-    ctx_->config = next;
-    dirty_ = true;
-
-    // Задел под будущие команды протокола: уведомить подписчиков.
-    config_changed_event_t evt = {0};
-    ctx_->events.post(APP_EVENTS_BASE, app_event_id_t::CONFIG_CHANGED, evt);
+void ConfigStore::onConfigChanged(const field_change_event_t* evt) {
+    if (!evt) return;
+    dirty_.store(true);
+    ESP_LOGD(TAG, "field 0x%04X changed, marked for auto-save", evt->uid);
 }
 
 void ConfigStore::loadFromFs() {
@@ -85,11 +223,11 @@ void ConfigStore::loadFromFs() {
     if (stat(full.c_str(), &st) != 0 || !S_ISREG(st.st_mode)) {
         ESP_LOGW(TAG, "No config file '%s', using defaults (will save on first tick)",
                  full.c_str());
-        dirty_ = true;
+        dirty_.store(true);
         return;
     }
     if (st.st_size <= 0) {
-        dirty_ = true;
+        dirty_.store(true);
         return;
     }
 
@@ -97,21 +235,21 @@ void ConfigStore::loadFromFs() {
     if (fd < 0) {
         ESP_LOGW(TAG, "Failed to open config file '%s', using defaults",
                  full.c_str());
-        dirty_ = true;
+        dirty_.store(true);
         return;
     }
 
     char* buf = static_cast<char*>(malloc(static_cast<size_t>(st.st_size)));
     if (!buf) {
         close(fd);
-        dirty_ = true;
+        dirty_.store(true);
         return;
     }
     ssize_t rd = read(fd, buf, static_cast<size_t>(st.st_size));
     close(fd);
     if (rd != st.st_size) {
         free(buf);
-        dirty_ = true;
+        dirty_.store(true);
         return;
     }
 
@@ -119,66 +257,99 @@ void ConfigStore::loadFromFs() {
     free(buf);
     if (!root) {
         ESP_LOGE(TAG, "Config JSON parse failed, using defaults");
-        dirty_ = true;
+        dirty_.store(true);
         return;
     }
 
-    // Строковые поля: только валидные, в буфер структуры не больше размера.
-    const cJSON* ssid = cJSON_GetObjectItem(root, "ap_ssid");
-    if (cJSON_IsString(ssid) && ssid->valuestring && ssid->valuestring[0]) {
-        snprintf(ctx_->config.apSsid, sizeof ctx_->config.apSsid, "%s",
-                 ssid->valuestring);
-    }
-    const cJSON* pass = cJSON_GetObjectItem(root, "ap_password");
-    if (cJSON_IsString(pass) && pass->valuestring && pass->valuestring[0]) {
-        snprintf(ctx_->config.apPassword, sizeof ctx_->config.apPassword, "%s",
-                 pass->valuestring);
-    }
-
-    // Числовые поля с диапазонами (невалидные → дефолт структуры).
-    const cJSON* it = cJSON_GetObjectItem(root, "ap_channel");
-    // Страна по умолчанию (cc=01) разрешает каналы 1..11; 12+ уронит
-    // esp_wifi_set_config — поэтому валидируем строго по этому диапазону.
-    ctx_->config.apChannel =
-        static_cast<uint8_t>(clampU32(it, 1, 11, ctx_->config.apChannel));
-
-    it = cJSON_GetObjectItem(root, "max_sta_conn");
-    ctx_->config.maxStaConn =
-        static_cast<uint8_t>(clampU32(it, 1, 8, ctx_->config.maxStaConn));
-
-    it = cJSON_GetObjectItem(root, "snapshot_interval_ms");
-    ctx_->config.snapshotIntervalMs =
-        clampU32(it, 100, 1000, ctx_->config.snapshotIntervalMs);
-
-    it = cJSON_GetObjectItem(root, "snapshot_ttl_ms");
-    ctx_->config.snapshotTtlMs =
-        clampU32(it, 500, 10000, ctx_->config.snapshotTtlMs);
-
-    it = cJSON_GetObjectItem(root, "max_tracked_pgns");
-    ctx_->config.maxTrackedPgns = static_cast<uint16_t>(
-        clampU32(it, 16, 256, ctx_->config.maxTrackedPgns));
-
+    // Применяем только известные поля (getMetaByName); неизвестные ключи
+    // (например старый snake_case формат) игнорируются → остаются дефолты.
+    applyFieldsJson(root, true);
     cJSON_Delete(root);
     ESP_LOGI(TAG, "Config loaded from %s", full.c_str());
 }
 
+// ============================================================
+// JSON: adata → cJSON-объект (только isConfig-поля, ключ = имя поля)
+// ============================================================
+
+cJSON* ConfigStore::buildFieldsJson() {
+    cJSON* obj = cJSON_CreateObject();
+    if (!obj) return nullptr;
+
+    AppDataLock dataLock(ctx_);
+    for (size_t i = 0; i < kAppFieldCount; ++i) {
+        const auto& meta = g_fieldMeta[i];
+        if (!meta.isConfig) continue;
+
+        const uint8_t* src =
+            reinterpret_cast<const uint8_t*>(&ctx_->adata) + meta.offset;
+
+        switch (meta.validator) {
+            case CFG_STRING:
+            case CFG_IP: {
+                const FixedString* fs = reinterpret_cast<const FixedString*>(src);
+                cJSON_AddStringToObject(obj, meta.name, fs->c_str());
+                break;
+            }
+            case CFG_FLOAT: {
+                float f;
+                memcpy(&f, src, sizeof(float));
+                cJSON_AddNumberToObject(obj, meta.name, static_cast<double>(f));
+                break;
+            }
+            case CFG_INT: {
+                int64_t v = readSignedLE(src, meta.size);
+                cJSON_AddNumberToObject(obj, meta.name, static_cast<double>(v));
+                break;
+            }
+            case CFG_UINT:
+            case CFG_ENUM:
+            case CFG_BOOL: {
+                uint64_t v = readUnsignedLE(src, meta.size);
+                cJSON_AddNumberToObject(obj, meta.name, static_cast<double>(v));
+                break;
+            }
+            default:
+                break;
+        }
+    }
+    return obj;
+}
+
+// ============================================================
+// Применение JSON-объекта к реестру
+// ============================================================
+
+// Восстановление конфига с устройства (trusted): readonly-поля пишутся их
+// владельцем домена, чтобы персистed runtime-поля (если появятся) восстанавливались.
+bool ConfigStore::applyFieldsJson(cJSON* root, bool trustedRestore) {
+    if (!root) return false;
+    return applyFieldsToCtx(ctx_, root, nullptr, trustedRestore);
+}
+
+// Применить поля и уведомить систему (CONFIG_CHANGED + PUSH) только для
+// реально изменившихся полей. Возвращает число изменённых полей.
+// Вызывается из протокола (CommModule, STEP-03): запись извне — readonly-поля
+// отклоняются (FieldDomain::PROTOCOL).
+size_t ConfigStore::applyFieldsWithNotify(cJSON* fields) {
+    if (!fields) return 0;
+
+    std::vector<uint16_t> changed;
+    applyFieldsToCtx(ctx_, fields, &changed, false);
+
+    for (uint16_t uid : changed) {
+        postFieldChanged(ctx_, uid);
+        sendField(ctx_, uid);
+    }
+    return changed.size();
+}
+
 void ConfigStore::saveToFs() {
-    cJSON* root = cJSON_CreateObject();
+    cJSON* root = buildFieldsJson();
     if (!root) {
         ESP_LOGE(TAG, "OOM creating config JSON");
         return;
     }
-    cJSON_AddStringToObject(root, "ap_ssid", ctx_->config.apSsid);
-    cJSON_AddStringToObject(root, "ap_password", ctx_->config.apPassword);
-    cJSON_AddNumberToObject(root, "ap_channel", ctx_->config.apChannel);
-    cJSON_AddNumberToObject(root, "max_sta_conn", ctx_->config.maxStaConn);
-    cJSON_AddNumberToObject(root, "snapshot_interval_ms",
-                            static_cast<double>(ctx_->config.snapshotIntervalMs));
-    cJSON_AddNumberToObject(root, "snapshot_ttl_ms",
-                            static_cast<double>(ctx_->config.snapshotTtlMs));
-    cJSON_AddNumberToObject(root, "max_tracked_pgns",
-                            static_cast<double>(ctx_->config.maxTrackedPgns));
-
     char* text = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
     if (!text) {
@@ -224,8 +395,26 @@ void ConfigStore::saveToFs() {
         return;
     }
 
-    dirty_ = false;
+    dirty_.store(false);
     ESP_LOGI(TAG, "Config saved to %s", full.c_str());
+}
+
+// ============================================================
+// Factory reset
+// ============================================================
+
+esp_err_t ConfigStore::reset() {
+    ESP_LOGW(TAG, "Factory reset: restoring defaults and clearing config");
+
+    initAppDataDefault(ctx_->adata);
+
+    // Удаляем файл конфига (+tmp), чтобы при старте применились дефолты.
+    unlink((basePath_ + kConfigPath).c_str());
+    unlink((basePath_ + kConfigPath + ".tmp").c_str());
+
+    ESP_LOGW(TAG, "Restarting ESP32 after factory reset");
+    esp_restart();   // не возвращает управление
+    return ESP_OK;
 }
 
 void ConfigStore::autoSaveWrapper(void* p) {
@@ -235,6 +424,6 @@ void ConfigStore::autoSaveWrapper(void* p) {
 void ConfigStore::autoSaveLoop() {
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(1000));
-        if (dirty_) saveToFs();
+        if (dirty_.load()) saveToFs();
     }
 }

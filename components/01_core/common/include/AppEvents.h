@@ -14,7 +14,9 @@ enum class app_event_id_t : int32_t {
     WS_CLIENT_CONNECTED,    // данные: ws_message_t (sockfd только)
     WS_CLIENT_DISCONNECTED, // данные: ws_message_t (sockfd только)
     WIFI_STATUS,            // данные: wifi_status_event_t
-    CONFIG_CHANGED,         // данные: config_changed_event_t (задел)
+    CONFIG_CHANGED,         // поле изменилось (данные: field_change_event_t, uid)
+    COMMUNICATION_SEND,     // отправить поле WS-клиентам (данные: communication_send_event_t)
+    FACTORY_RESET,          // сброс к заводским настройкам (без данных)
     OTA_BEGIN,              // начало OTA: flash-операции идут (данные: ota_begin_event_t)
     OTA_END                 // конец OTA: flash-операции завершены (без данных)
 };
@@ -57,6 +59,13 @@ struct ota_begin_event_t {
     std::atomic<bool>* ack;
 };
 
-struct config_changed_event_t {
-    int field;   // индекс поля в AppConfig (перечислить в AppConfig.h при надобности)
+// Данные для COMMUNICATION_SEND: поле, которое нужно отправить WS-клиентам.
+struct communication_send_event_t {
+    uint16_t fieldUid;   // UID поля из реестра (AppData)
+    int      sockfd = -1; // адресная отправка (-1 = broadcast)
+};
+
+// Данные для CONFIG_CHANGED: UID изменённого поля.
+struct field_change_event_t {
+    uint16_t uid;   // UID изменённого поля
 };
