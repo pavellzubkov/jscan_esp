@@ -9,6 +9,40 @@ inline void sendField(AppContext* ctx, uint16_t uid)
     ctx->events.post(APP_EVENTS_BASE, app_event_id_t::COMMUNICATION_SEND, evt);
 }
 
+// Запись runtime-поля с diff+push: под AppDataLock сравнивает новое значение
+// со старым, сохраняет, и если поле реально изменилось — пушит его клиентам
+// (PARAM_PUSH broadcast). Возвращает true при изменении.
+// Аналог «агрегатора» из TEMP_PID, но без центрального модуля: владелец
+// домена пишет своё поле сам, а эта функция избавляет от безусловного
+// sendField и лишнего PUSH-спама.
+template <typename T>
+bool updateField(AppContext* ctx, uint16_t uid, const T& value)
+{
+    if (!ctx)
+        return false;
+
+    uint8_t oldBuf[kAppMaxFieldSize + 8];
+    size_t oldLen = 0;
+    bool changed = false;
+
+    {
+        AppDataLock lock(ctx);   // чтение+запись — одна атомарная операция
+        const bool hadOld = ctx->fields.readField(uid, oldBuf, sizeof(oldBuf),
+                                                  &oldLen);
+        ctx->fields.writeFieldScalar(uid, value);
+
+        uint8_t newBuf[kAppMaxFieldSize + 8];
+        size_t newLen = 0;
+        ctx->fields.readField(uid, newBuf, sizeof(newBuf), &newLen);
+        changed = !hadOld || oldLen != newLen ||
+                  memcmp(oldBuf, newBuf, oldLen) != 0;
+    }
+
+    if (changed)
+        sendField(ctx, uid);
+    return changed;
+}
+
 // Опубликовать изменение поля в общей шине приложения.
 // Позволяет доменным функциям общаться друг с другом через тот же
 // механизм, что и запись по протоколу (app_event_id_t::CONFIG_CHANGED).

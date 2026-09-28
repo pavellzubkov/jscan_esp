@@ -4,6 +4,14 @@
 #include <cstddef>
 #include <cstdint>
 
+// Опциональный провайдер «динамических» runtime-полей: вычисляет значение
+// на лету в момент чтения (uptimeMs/heapFree и т.п.), вместо хранения в
+// AppData. Вызывается под тем же мьютексом, что и обычное чтение, но не
+// трогает AppData — сразу сериализует результат в out.
+// Возвращает true, если поле обработано.
+using FieldDynamicReader = bool (*)(uint16_t uid, uint8_t* out,
+                                    size_t out_cap, size_t* out_len);
+
 // Результат попытки записи поля.
 enum class FieldWriteStatus : uint8_t {
     OK = 0,
@@ -31,6 +39,10 @@ class FieldRegistry {
     const FieldMeta* getMetaByName(const char* name) const;
     size_t fieldCount() const;
     const FieldMeta& fieldAt(size_t index) const;
+
+    // Регистрация провайдера динамических полей (один на систему).
+    // Вызывается один раз при старте, до запуска задач.
+    void setDynamicReader(FieldDynamicReader reader);
 
     // --- Чтение ---
     // Копирует сериализованное значение поля (по правилам PROTOCOL.md) в out.
@@ -67,4 +79,5 @@ class FieldRegistry {
 
  private:
     AppData& data_;
+    FieldDynamicReader dynamicReader_ = nullptr;
 };

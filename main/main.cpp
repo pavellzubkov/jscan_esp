@@ -31,7 +31,8 @@ extern "C" void app_main() {
     // netctrl — владеет wifi + server (HTTP/WS/static). Некритичен: без сети
     // J1939-скан продолжает работать (degraded mode).
     REGISTER_MODULE(boot, "netctrl", NetworkController,   40, false);
-    // sysinfo — системный статус: fwVersion/uptimeMs/heapFree раз в секунду.
+    // sysinfo — системный статус (SYSTEM-домен): fwVersion пишется один раз;
+    // uptimeMs/heapFree вычисляются на лету при чтении (без периодических задач).
     REGISTER_MODULE(boot, "sysinfo", SystemStatusModule,  50, false);
     // j1939 — TWAI-приём, TP, снапшоты.
     REGISTER_MODULE(boot, "j1939",   J1939System,         70, false);

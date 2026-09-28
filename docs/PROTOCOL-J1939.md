@@ -167,10 +167,17 @@ repeat count:
 
 ### 4.6 Телеметрия (PUSH)
 
-Владельцы runtime-полей (WifiApModule, J1939System, SystemStatusModule) раз в
-секунду публикуют свои поля: `PARAM_PUSH{uid, value}` broadcast'ом всем
-клиентам. Push-on-connect и PUSH-телеметрия используют один и тот же тип
-0x0007.
+Поля шлются клиентам **по событию/изменению**, а не по таймеру:
+
+- **Запись по протоколу** (`PARAM_SET`): если значение изменилось — broadcast
+  `PARAM_PUSH` всем клиентам (см. §4.3).
+- **Runtime-поля**: владелец домена при изменении шлёт `PARAM_PUSH{uid, value}`
+  broadcast'ом (хелпер `updateField` — запись + diff, пушит только при изменении).
+- **Непрерывные SYSTEM-поля** (`uptimeMs`/`heapFree`) — **не пушатся**: они
+  вычисляются на лету в момент чтения (`PARAM_REQUEST`/push-on-connect), поэтому
+  всегда свежие без периодических задач и PUSH-спама.
+
+Push-on-connect и PUSH-телеметрия используют один и тот же тип 0x0007.
 
 ### 4.7 Factory reset
 
@@ -208,8 +215,9 @@ uint32  pgn       // LE, запрашиваемый PGN (например 65227 
 5. **Запись параметра**: клиент шлёт `PARAM_SET{uid, value}` → `PARAM_ACK{uid}` +
    broadcast `PARAM_PUSH` (см. §4.3); конфиг применяется вживую и сохраняется
    в `/config/config.json`.
-6. **Runtime-телеметрия**: WifiApModule / J1939System / SystemStatusModule раз в
-   секунду шлют broadcast `PARAM_PUSH` своих полей (см. §4.6).
+6. **Runtime-телеметрия**: поля пушатся по изменению (владелец домена →
+   `PARAM_PUSH`); непрерывные SYSTEM-поля (`uptimeMs`/`heapFree`) вычисляются
+   при чтении — по таймеру ничего не шлётся (см. §4.6).
 7. **Factory reset**: клиент шлёт `FACTORY_RESET` (0x0008) → ESP сбрасывает
    config-поля к дефолтам, удаляет `config.json` и перезагружается (см. §4.7).
 

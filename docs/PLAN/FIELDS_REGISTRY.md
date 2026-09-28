@@ -205,8 +205,10 @@ UID = `fnv1a32(name)&0xFFFF`; коллизии и 0xFFFF ловит static_asser
 Проверка: сборка.
 
 ## STEP-06 — SystemStatusModule (опционально, новый components/03_systems/system_status)
-- Маленький модуль (приоритет ~50): задача раз в 1 с пишет fwVersion/uptimeMs/heapFree
-  (SYSTEM-домен) + COMMUNICATION_SEND. Зарегистрировать в `main/main.cpp`
+- Маленький модуль (приоритет ~50), **без периодических задач**: регистрирует
+  `FieldDynamicReader` (uptimeMs/heapFree считаются на лету при чтении —
+  REQUEST/push-on-connect всегда возвращают свежее значение) и один раз при
+  старте пишет `fwVersion` (SYSTEM-домен). Зарегистрировать в `main/main.cpp`
   (`REGISTER_MODULE`). Можно выкинуть, если не нужен.
 
 Проверка: сборка.

@@ -1,10 +1,12 @@
 #pragma once
 #include "AppContext.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
 
-// Системный статус: публикует runtime-поля SYSTEM-домена
-// (fwVersion/uptimeMs/heapFree) раз в секунду.
+// Системный статус (SYSTEM-домен): владелец полей fwVersion/uptimeMs/heapFree.
+// Периодических задач нет:
+//   * fwVersion — статично, пишется один раз при старте;
+//   * uptimeMs/heapFree — непрерывные значения, вычисляются «на лету» при
+//     чтении (FieldDynamicReader): PARAM_REQUEST / push-on-connect всегда
+//     возвращают свежие данные без PUSH-спама раз в секунду.
 class SystemStatusModule {
 public:
     explicit SystemStatusModule(AppContext* ctx);
@@ -14,8 +16,8 @@ public:
 
 private:
     AppContext* ctx_;
-    TaskHandle_t task_ = nullptr;
 
-    static void taskWrapper(void* p);
-    void taskLoop();
+    // Ленивый подсчёт непрерывных SYSTEM-полей при чтении.
+    static bool readDynamicSystemField(uint16_t uid, uint8_t* out,
+                                       size_t out_cap, size_t* out_len);
 };

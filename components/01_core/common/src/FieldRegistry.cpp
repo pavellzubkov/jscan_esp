@@ -123,10 +123,22 @@ const FieldMeta& FieldRegistry::fieldAt(size_t index) const {
     return g_fieldMeta[index];
 }
 
+void FieldRegistry::setDynamicReader(FieldDynamicReader reader) {
+    dynamicReader_ = reader;
+}
+
 bool FieldRegistry::readField(uint16_t uid, void* out, size_t out_cap,
                               size_t* out_len) const {
     const FieldMeta* meta = getMetaByUid(uid);
     if (!meta) return false;
+
+    // Динамические поля считаются на лету провайдером (например, uptimeMs/
+    // heapFree) — в AppData они не хранятся, поэтому обычный путь ниже
+    // не используется.
+    if (dynamicReader_ &&
+        dynamicReader_(uid, static_cast<uint8_t*>(out), out_cap, out_len)) {
+        return true;
+    }
 
     size_t len = serializedFieldSize(meta, &data_);
     if (out_len) *out_len = len;

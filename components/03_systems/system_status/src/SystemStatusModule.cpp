@@ -1,19 +1,11 @@
 #include "SystemStatusModule.h"
 
-#include "LogicUtils.h"
 #include "esp_log.h"
 #include "esp_system.h"
 #include "esp_timer.h"
 
 namespace {
 const char* TAG = "sys_status";
-
-// Стек задачи маленький: публикуются только три скалярных поля.
-constexpr uint16_t kTaskStackSize = 4096;
-constexpr uint8_t  kTaskPriority  = 1;
-constexpr uint8_t  kTaskCore      = 0;   // ядро 0 безопасно для ESP32 и ESP32-S3
-
-constexpr uint32_t kPeriodMs = 1000;
 }
 
 SystemStatusModule::SystemStatusModule(AppContext* ctx)
@@ -23,50 +15,52 @@ SystemStatusModule::SystemStatusModule(AppContext* ctx)
 
 SystemStatusModule::~SystemStatusModule()
 {
-    if (task_)
-    {
-        vTaskDelete(task_);
-        task_ = nullptr;
-    }
     if (ctx_)
         ctx_->events.unsubscribe(this);
 }
 
 esp_err_t SystemStatusModule::begin()
 {
-    if (xTaskCreatePinnedToCore(taskWrapper, "sys_status", kTaskStackSize, this,
-                                kTaskPriority, &task_, kTaskCore) != pdPASS)
-    {
-        ESP_LOGE(TAG, "task create failed");
+    if (!ctx_)
         return ESP_FAIL;
-    }
 
-    ESP_LOGI(TAG, "started");
+    // Непрерывные SYSTEM-поля считаются в момент чтения (REQUEST / push-on-
+    // connect) — периодическая задача не нужна.
+    ctx_->fields.setDynamicReader(&SystemStatusModule::readDynamicSystemField);
+
+    // fwVersion — статично, пишется один раз при старте.
+    ctx_->fields.writeFieldScalar(fwVersion_UID, FixedString("1.0.0"));
+
+    ESP_LOGI(TAG, "started (SYSTEM fields computed on read)");
     return ESP_OK;
 }
 
-void SystemStatusModule::taskWrapper(void* p)
+// Ленивый подсчёт uptimeMs/heapFree при чтении. Не трогает AppData — сразу
+// сериализует uint32 (raw LE) в out, поэтому мьютекс не требуется.
+// out==nullptr — запрос размера (семантика FieldRegistry::readField).
+bool SystemStatusModule::readDynamicSystemField(uint16_t uid, uint8_t* out,
+                                                size_t out_cap,
+                                                size_t* out_len)
 {
-    static_cast<SystemStatusModule*>(p)->taskLoop();
-}
+    constexpr size_t kSize = sizeof(uint32_t);
+    if (out_len)
+        *out_len = kSize;
+    if (!out)
+        return true;
+    if (out_cap < kSize)
+        return false;
 
-void SystemStatusModule::taskLoop()
-{
-    while (1)
-    {
-        vTaskDelay(pdMS_TO_TICKS(kPeriodMs));
+    uint32_t value;
+    if (uid == uptimeMs_UID)
+        value = static_cast<uint32_t>(esp_timer_get_time() / 1000);
+    else if (uid == heapFree_UID)
+        value = static_cast<uint32_t>(esp_get_free_heap_size());
+    else
+        return false;   // не наше динамическое поле
 
-        AppDataLock dataLock(ctx_);   // атомарная публикация блока SYSTEM-полей
-
-        const uint32_t uptimeMs = static_cast<uint32_t>(esp_timer_get_time() / 1000);
-        const uint32_t heapFree = static_cast<uint32_t>(esp_get_free_heap_size());
-
-        ctx_->fields.writeFieldScalar(fwVersion_UID, FixedString("1.0.0"));
-        ctx_->fields.writeFieldScalar(uptimeMs_UID, uptimeMs);
-        ctx_->fields.writeFieldScalar(heapFree_UID, heapFree);
-
-        sendField(ctx_, fwVersion_UID);
-        sendField(ctx_, uptimeMs_UID);
-        sendField(ctx_, heapFree_UID);
-    }
+    out[0] = static_cast<uint8_t>(value & 0xFF);
+    out[1] = static_cast<uint8_t>((value >> 8) & 0xFF);
+    out[2] = static_cast<uint8_t>((value >> 16) & 0xFF);
+    out[3] = static_cast<uint8_t>((value >> 24) & 0xFF);
+    return true;
 }
