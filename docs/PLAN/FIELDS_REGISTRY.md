@@ -17,9 +17,9 @@
 - [x] STEP-03 — Протокол: новые MsgType + CommModule (01_core/common, 04_network/communication)
 - [x] STEP-04 — TWAI runtime + конфиг (02_hardware/twai, 03_systems/j1939_system)
 - [x] STEP-05 — WifiApModule: live-apply + runtime-поля (04_network/wifi)
-- [ ] STEP-06 — SystemStatusModule (опционально, новый 03_systems/system_status)
-- [ ] STEP-07 — Документация (docs/PROTOCOL-J1939.md, AGENTS.md)
-- [ ] STEP-08 — Финальная сборка и проверка
+- [x] STEP-06 — SystemStatusModule (опционально, новый 03_systems/system_status)
+- [x] STEP-07 — Документация (docs/PROTOCOL-J1939.md, AGENTS.md)
+- [x] STEP-08 — Финальная сборка и проверка
 
 ---
 

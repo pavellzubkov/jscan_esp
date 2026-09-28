@@ -91,12 +91,14 @@ static bool jsonToWireValue(const FieldMeta& meta, const cJSON* item,
 // Применить поля из JSON-объекта по именам (getMetaByName). Неизвестные
 // ключи игнорируются — соответствующие поля остаются на дефолтах (решение #4).
 // changed != nullptr — собирает UID реально изменившихся полей.
+// hadUnknown != nullptr — устанавливается true при неизвестном ключе
+// (устаревший формат config.json → автосейв перезапишет файл).
 // trustedRestore=true — данные пришли с самого устройства (файл): runtime-поля
 // восстанавливаются владельцем домена. false — извне (протокол): readonly-поля
 // отклоняются (FieldWriteStatus::READONLY_DENIED).
 static bool applyFieldsToCtx(AppContext* ctx, const cJSON* fields,
                              std::vector<uint16_t>* changed,
-                             bool trustedRestore) {
+                             bool trustedRestore, bool* hadUnknown = nullptr) {
     if (!fields || !cJSON_IsObject(fields)) return false;
 
     AppDataLock dataLock(ctx);  // защита многополевой записи в adata
@@ -108,6 +110,7 @@ static bool applyFieldsToCtx(AppContext* ctx, const cJSON* fields,
 
         const FieldMeta* meta = ctx->fields.getMetaByName(item->string);
         if (!meta) {
+            if (hadUnknown) *hadUnknown = true;
             ESP_LOGW(TAG, "Unknown field in config JSON: %s", item->string);
             continue;
         }
@@ -263,8 +266,15 @@ void ConfigStore::loadFromFs() {
 
     // Применяем только известные поля (getMetaByName); неизвестные ключи
     // (например старый snake_case формат) игнорируются → остаются дефолты.
-    applyFieldsJson(root, true);
+    // Если встретился хоть один неизвестный ключ — помечаем dirty_: автосейв
+    // на следующем тике перезапишет файл в актуальном формате.
+    bool hadUnknown = false;
+    applyFieldsJson(root, true, &hadUnknown);
     cJSON_Delete(root);
+    if (hadUnknown) {
+        ESP_LOGW(TAG, "Legacy/unknown keys in config JSON, will rewrite in new format");
+        dirty_.store(true);
+    }
     ESP_LOGI(TAG, "Config loaded from %s", full.c_str());
 }
 
@@ -322,9 +332,10 @@ cJSON* ConfigStore::buildFieldsJson() {
 
 // Восстановление конфига с устройства (trusted): readonly-поля пишутся их
 // владельцем домена, чтобы персистed runtime-поля (если появятся) восстанавливались.
-bool ConfigStore::applyFieldsJson(cJSON* root, bool trustedRestore) {
+bool ConfigStore::applyFieldsJson(cJSON* root, bool trustedRestore,
+                                  bool* hadUnknown) {
     if (!root) return false;
-    return applyFieldsToCtx(ctx_, root, nullptr, trustedRestore);
+    return applyFieldsToCtx(ctx_, root, nullptr, trustedRestore, hadUnknown);
 }
 
 // Применить поля и уведомить систему (CONFIG_CHANGED + PUSH) только для

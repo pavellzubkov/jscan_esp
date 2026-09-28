@@ -4,6 +4,7 @@
 #include "CommModule.h"
 #include "NetworkController.hpp"
 #include "J1939System.h"
+#include "SystemStatusModule.h"
 #include "esp_log.h"
 #include "esp_ota_ops.h"
 #include "freertos/FreeRTOS.h"
@@ -30,6 +31,8 @@ extern "C" void app_main() {
     // netctrl — владеет wifi + server (HTTP/WS/static). Некритичен: без сети
     // J1939-скан продолжает работать (degraded mode).
     REGISTER_MODULE(boot, "netctrl", NetworkController,   40, false);
+    // sysinfo — системный статус: fwVersion/uptimeMs/heapFree раз в секунду.
+    REGISTER_MODULE(boot, "sysinfo", SystemStatusModule,  50, false);
     // j1939 — TWAI-приём, TP, снапшоты.
     REGISTER_MODULE(boot, "j1939",   J1939System,         70, false);
 

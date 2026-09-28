@@ -1,7 +1,7 @@
 idf_component_register(
     SRCS "main.cpp"
     INCLUDE_DIRS ""
-    REQUIRES common config_store communication netctrl j1939_system
+    REQUIRES common config_store communication netctrl j1939_system system_status
              freertos log
 )
 

@@ -69,6 +69,15 @@ export function crc16(data: Uint8Array): number {
 |---|---|---|---|
 | 0x0001 | `J1939_SNAPSHOT` | ESP → клиент | батч записей (см. §3) |
 | 0x0002 | `J1939_REQUEST` | клиент → ESP | `{dstAddr u8, pgn u32 LE}` (см. §4) |
+| 0x0003 | `PARAM_REQUEST` | клиент → ESP | `{uid u16 LE}` |
+| 0x0004 | `PARAM_SET` | клиент → ESP | `{uid u16 LE, value}` |
+| 0x0005 | `PARAM_ACK` | ESP → клиент | `{uid u16 LE [, value — для REQUEST]}` |
+| 0x0006 | `PARAM_NACK` | ESP → клиент | `{uid u16 LE, err u8}` |
+| 0x0007 | `PARAM_PUSH` | ESP → клиент | `{uid u16 LE, value}` |
+| 0x0008 | `FACTORY_RESET` | клиент → ESP | пусто |
+
+Ошибки `PARAM_NACK` (`err`): `0`=unknown UID, `1`=readonly, `2`=range,
+`3`=len (неверная длина value).
 
 ---
 
@@ -111,7 +120,66 @@ repeat count:
 
 ---
 
-## 4. J1939_REQUEST (клиент → ESP)
+## 4. Канал параметров (0x0003–0x0008)
+
+### 4.1 UID поля
+
+Каждое поле реестра (конфиг и runtime) идентифицируется `uid u16 LE` =
+`fnv1a32(name) & 0xFFFF`. Алгоритм совпадает на ESP и на клиенте (`FieldRegistry` /
+`gen_schema.ts`). `0xFFFF` зарезервирован (не валидный UID). Полный список
+полей — реестр `components/01_core/common/include/fields/*.inc` (источник для
+генерации TS-схемы).
+
+### 4.2 Сериализация value (общая для SET/ACK/PUSH)
+
+| Тип (валидатор) | Сериализация |
+|---|---|
+| STRING / IP | `[len u8][data]` (len — длина строки, без NUL) |
+| UINT / INT / BOOL | raw little-endian, длина по типу (u8/u16/u32) |
+| FLOAT | IEEE-754, 4 байта LE |
+
+Для SET клиент может писать и **сокращённый** вариант числа (меньше байт,
+чем размер типа): недостающие старшие байты дополняются нулями. ESP валидирует
+значение по `min..max` и типу.
+
+### 4.3 Запись (SET)
+
+1. Клиент → ESP: `PARAM_SET {uid u16 LE, value}`.
+2. ESP пишет поле через `FieldRegistry::writeField` (владелец — `PROTOCOL`):
+   - config-поля (readonly=false) — всегда разрешены;
+   - runtime-поля (readonly=true) — отказ `PARAM_NACK{uid, 1}`.
+3. Успех: `PARAM_ACK{uid}` + broadcast `PARAM_PUSH{uid, value}` всем клиентам;
+   если значение изменилось — событие `CONFIG_CHANGED{uid}`: владельцы доменов
+   применяют конфиг вживую, `ConfigStore` ставит автозапись конфига.
+4. Ошибки: `PARAM_NACK{uid, err}` (`0`=unknown, `2`=range, `3`=len).
+
+### 4.4 Чтение (REQUEST)
+
+1. Клиент → ESP: `PARAM_REQUEST {uid u16 LE}`.
+2. ESP отвечает `PARAM_ACK{uid, value}` (сериализация по §4.2) или
+   `PARAM_NACK{uid, 0}` если поля нет.
+
+### 4.5 Push-on-connect
+
+При подключении WS-клиента ESP шлёт ему **адресно** (только его сокету)
+`PARAM_PUSH` для **всех** полей реестра — клиент получает полную картину
+конфига и runtime-состояния без отдельных REQUEST.
+
+### 4.6 Телеметрия (PUSH)
+
+Владельцы runtime-полей (WifiApModule, J1939System, SystemStatusModule) раз в
+секунду публикуют свои поля: `PARAM_PUSH{uid, value}` broadcast'ом всем
+клиентам. Push-on-connect и PUSH-телеметрия используют один и тот же тип
+0x0007.
+
+### 4.7 Factory reset
+
+Клиент → ESP: `FACTORY_RESET` (пустой payload). ESP сбрасывает config-поля к
+дефолтам, удаляет `/config/config.json` и перезагружается.
+
+---
+
+## 5. J1939_REQUEST (клиент → ESP)
 
 ESP получает кадр, разбирает payload, публикует внутреннее событие
 `J1939_REQUEST`, `J1939System` отправляет по CAN-шине RQST (PGN 59904,
@@ -128,19 +196,34 @@ uint32  pgn       // LE, запрашиваемый PGN (например 65227 
 
 ---
 
-## 5. Сценарии обмена
+## 6. Сценарии обмена
 
-1. **Подключение клиента**: сервер логирует, но ничего не шлёт сам по себе
-   (в отличие от per-field PUSH в TEMP_PID). Состояние J1939 приходит первым
-   же снапшотом.
-2. **Телеметрия**: каждые `snapshotIntervalMs` сервер шлёт broadcast батч
+1. **Подключение клиента**: сервер шлёт новому сокету **адресно** `PARAM_PUSH`
+   всех полей реестра (см. §4.5); дальше J1939-состояние приходит снапшотами.
+2. **Телеметрия J1939**: каждые `snapshotIntervalMs` сервер шлёт broadcast батч
    `J1939_SNAPSHOT` всем клиентам.
 3. **Запрос PGN**: клиент шлёт `J1939_REQUEST`; ESP шлёт RQST на шину; когда
    данные придут — они попадут в следующие снапшоты.
+4. **Чтение параметра**: клиент шлёт `PARAM_REQUEST{uid}` → `PARAM_ACK{uid, value}`.
+5. **Запись параметра**: клиент шлёт `PARAM_SET{uid, value}` → `PARAM_ACK{uid}` +
+   broadcast `PARAM_PUSH` (см. §4.3); конфиг применяется вживую и сохраняется
+   в `/config/config.json`.
+6. **Runtime-телеметрия**: WifiApModule / J1939System / SystemStatusModule раз в
+   секунду шлют broadcast `PARAM_PUSH` своих полей (см. §4.6).
+7. **Factory reset**: клиент шлёт `FACTORY_RESET` (0x0008) → ESP сбрасывает
+   config-поля к дефолтам, удаляет `config.json` и перезагружается (см. §4.7).
+
+### Конфиг по именам полей
+
+`/config/config.json` хранит **только config-поля** (readonly=false) по **именам**
+(не по UID): `{"apSsid":"J1939_AP","snapshotIntervalMs":250,...}`. Runtime-поля
+(telemetry) в файл не пишутся. Неизвестные/устаревшие ключи при загрузке
+игнорируются и заменяются дефолтами; при следующем автосейве файл
+перезаписывается в актуальном формате (миграции нет).
 
 ---
 
-## 6. Ограничения
+## 7. Ограничения
 
 - Максимальная длина payload батча: 8192 байт (`kMaxBatchPayload`).
   `totalLen ≤ 8202` байта (`kMaxWsMessageLen = 8192` + 10 заголовка).
@@ -152,21 +235,26 @@ uint32  pgn       // LE, запрашиваемый PGN (например 65227 
 
 ---
 
-## 7. Советы по TS/Vue клиенту
+## 8. Советы по TS/Vue клиенту
 
 - Читать `event.data` как `ArrayBuffer`/`Blob` → `Uint8Array`/`DataView`.
 - Проверять: `[0..1]=0x5A 0xA5`, `[2]==1`, CRC по `[0..len-3]`.
-- `MsgType` — `[4..5]` LE: `0x0001` = снапшот, `0x0002` = запрос (только для
-  исходящих от клиента).
+- `MsgType` — `[4..5]` LE: `0x0001` = снапшот, `0x0002` = запрос (исходящие),
+  `0x0003..0x0008` — канал параметров (§4).
 - В снапшоте: `count = payload[0]`; итерировать записи, читая
   `sa(1) pgn(3 LE) len(1) data(len) periodMs(2 LE)`.
 - Динамическая таблица PGN: записи добавляются/обновляются по `(sa,pgn)`,
   удаляются/гаснут по `periodMs`/TTL (нет TTL в кадре — клиент сам засекает
   отсутствие обновления записи дольше ~`snapshotTtlMs`).
+- Для параметров держать локальную карту `uid → schema` (генерировать из
+  `*.inc`/`gen_schema.ts`); UID вычислять тем же `fnv1a32(name) & 0xFFFF`.
+- Схему применять к `PARAM_ACK`/`PARAM_PUSH` payload: `uid u16 LE` + value по §4.2.
+- `sockfd` для адресных сообщений не нужен — весь параметр-канал работает
+  на broadcast/PUSH.
 
 ---
 
-## 8. Ссылки
+## 9. Ссылки
 
 - Чекпоинт с решениями: `docs/PROTOCOL_J1939_CHECKPOINT.md`.
 - Реализация на ESP: `components/01_core/common/include/J1939Proto.h`,
