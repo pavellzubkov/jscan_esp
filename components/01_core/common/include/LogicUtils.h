@@ -7,7 +7,7 @@
 inline void sendField(AppContext* ctx, uint16_t uid)
 {
     communication_send_event_t evt = { uid, -1 };
-    ctx->events.post(APP_EVENTS_BASE, app_event_id_t::COMMUNICATION_SEND, evt);
+    postEvent<app_event_id_t::COMMUNICATION_SEND>(ctx->events, evt);
 }
 
 // Запись runtime-поля с diff+push: под AppDataLock сравнивает новое значение
@@ -52,5 +52,5 @@ bool updateField(AppContext* ctx, uint16_t uid, const T& value)
 inline void postFieldChanged(AppContext* ctx, uint16_t uid)
 {
     field_change_event_t evt = { uid };
-    ctx->events.post(APP_EVENTS_BASE, app_event_id_t::CONFIG_CHANGED, evt);
+    postEvent<app_event_id_t::CONFIG_CHANGED>(ctx->events, evt);
 }

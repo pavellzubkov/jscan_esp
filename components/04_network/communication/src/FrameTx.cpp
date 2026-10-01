@@ -36,8 +36,8 @@ void FrameTx::send(uint16_t msgType, uint8_t flags, const uint8_t* payload,
     msg->sockfd = sockfd;
     msg->length = frameLen;
 
-    ctx_->events.postSized(APP_EVENTS_BASE, app_event_id_t::WS_MESSAGE_SEND,
-                           msg, sizeof(ws_message_t) + frameLen);
-    // postSized копировал данные в очередь — буфер здесь уже не нужен;
+    postSizedEvent<app_event_id_t::WS_MESSAGE_SEND>(
+        ctx_->events, msg, sizeof(ws_message_t) + frameLen);
+    // postSizedEvent копировал данные в очередь — буфер здесь уже не нужен;
     // освободится автоматически (и на путях ошибок выше — тоже).
 }

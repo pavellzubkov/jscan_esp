@@ -110,10 +110,10 @@ esp_err_t J1939System::begin()
     // удалит объект при ошибке begin(), dtor снимет уже зарегистрированные
     // подписки и остановит TWAI — откат делать отдельно не нужно.
     const bool subsOk =
-        ctx_->events.subscribe(APP_EVENTS_BASE, app_event_id_t::J1939_REQUEST,
-                               &J1939System::onJ1939Request, this) &&
-        ctx_->events.subscribe(APP_EVENTS_BASE, app_event_id_t::CONFIG_CHANGED,
-                               &J1939System::onConfigChanged, this);
+        subscribeEvent<app_event_id_t::J1939_REQUEST>(
+            ctx_->events, &J1939System::onJ1939Request, this) &&
+        subscribeEvent<app_event_id_t::CONFIG_CHANGED>(
+            ctx_->events, &J1939System::onConfigChanged, this);
     if (!subsOk)
     {
         ESP_LOGE(TAG, "event subscribe failed, abort start");
@@ -425,9 +425,8 @@ void J1939System::sendSnapshot(uint32_t nowMs)
     snap->length = payloadLen;
     J1939Proto::serializeBatch(snap->data, payloadLen, batch, batchCount);
 
-    ctx_->events.postSized(APP_EVENTS_BASE,
-                           app_event_id_t::J1939_SNAPSHOT_SEND,
-                           snap.get(), evSize);
-    // postSized скопировал данные в очередь event loop'а → буфер здесь
+    postSizedEvent<app_event_id_t::J1939_SNAPSHOT_SEND>(
+        ctx_->events, snap.get(), evSize);
+    // postSizedEvent скопировал данные в очередь event loop'а → буфер здесь
     // больше не нужен; освободит unique_ptr.
 }

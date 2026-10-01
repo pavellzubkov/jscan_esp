@@ -25,12 +25,12 @@ J1939Channel::~J1939Channel()
 esp_err_t J1939Channel::begin()
 {
     const bool subsOk =
-        ctx_->events.subscribe(APP_EVENTS_BASE, app_event_id_t::J1939_SNAPSHOT_SEND,
-                               &J1939Channel::onSnapshot, this) &&
-        ctx_->events.subscribe(APP_EVENTS_BASE, app_event_id_t::WS_CLIENT_CONNECTED,
-                               &J1939Channel::onClientConnected, this) &&
-        ctx_->events.subscribe(APP_EVENTS_BASE, app_event_id_t::WS_CLIENT_DISCONNECTED,
-                               &J1939Channel::onClientDisconnected, this);
+        subscribeEvent<app_event_id_t::J1939_SNAPSHOT_SEND>(
+            ctx_->events, &J1939Channel::onSnapshot, this) &&
+        subscribeEvent<app_event_id_t::WS_CLIENT_CONNECTED>(
+            ctx_->events, &J1939Channel::onClientConnected, this) &&
+        subscribeEvent<app_event_id_t::WS_CLIENT_DISCONNECTED>(
+            ctx_->events, &J1939Channel::onClientDisconnected, this);
     if (!subsOk)
     {
         ESP_LOGE(TAG, "event subscribe failed");
@@ -88,5 +88,5 @@ void J1939Channel::onClientRequest(const uint8_t* payload, size_t payloadLen)
               (static_cast<uint32_t>(payload[2]) << 8) |
               (static_cast<uint32_t>(payload[3]) << 16);
     ESP_LOGI(TAG, "RQST pgn=%lu dst=%u", (unsigned long)req.pgn, req.dstAddr);
-    ctx_->events.post(APP_EVENTS_BASE, app_event_id_t::J1939_REQUEST, req);
+    postEvent<app_event_id_t::J1939_REQUEST>(ctx_->events, req);
 }

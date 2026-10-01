@@ -75,12 +75,12 @@ void OtaService::init(AppContext* ctx, LittleFsService* fs) {
 
 void OtaService::enterOta() {
     if (!ctx_) return;
-    ctx_->events.post(APP_EVENTS_BASE, app_event_id_t::OTA_BEGIN);
+    postEvent<app_event_id_t::OTA_BEGIN>(ctx_->events);
 }
 
 void OtaService::exitOta() {
     if (!ctx_) return;
-    ctx_->events.post(APP_EVENTS_BASE, app_event_id_t::OTA_END);
+    postEvent<app_event_id_t::OTA_END>(ctx_->events);
 }
 
 // ---------------------------------------------------------------

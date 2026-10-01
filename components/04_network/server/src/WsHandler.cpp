@@ -54,7 +54,7 @@ void WsHandler::add_client(int sockfd) {
     if (was_connected) {
       ws_message_t dmsg = {};
       dmsg.sockfd = rejected;
-      ctx_->events.post(APP_EVENTS_BASE, app_event_id_t::WS_CLIENT_DISCONNECTED, dmsg);
+      postEvent<app_event_id_t::WS_CLIENT_DISCONNECTED>(ctx_->events, dmsg);
     }
     // Закрываем сокет, чтобы клиент не висел подключённым без доставки данных.
     if (server_) {
@@ -80,9 +80,9 @@ void WsHandler::add_client(int sockfd) {
     // Повторная регистрация того же sockfd: старое соединение закрылось
     // без remove_client — балансируем парой DISCONNECTED/CONNECTED,
     // иначе счётчики аудитории уедут вверх.
-    ctx_->events.post(APP_EVENTS_BASE, app_event_id_t::WS_CLIENT_DISCONNECTED, msg);
+    postEvent<app_event_id_t::WS_CLIENT_DISCONNECTED>(ctx_->events, msg);
   }
-  ctx_->events.post(APP_EVENTS_BASE, app_event_id_t::WS_CLIENT_CONNECTED, msg);
+  postEvent<app_event_id_t::WS_CLIENT_CONNECTED>(ctx_->events, msg);
 }
 
 void WsHandler::remove_client(int sockfd) {
@@ -110,7 +110,7 @@ void WsHandler::remove_client(int sockfd) {
 
     ws_message_t msg = {};
     msg.sockfd = sockfd;
-    ctx_->events.post(APP_EVENTS_BASE, app_event_id_t::WS_CLIENT_DISCONNECTED, msg);
+    postEvent<app_event_id_t::WS_CLIENT_DISCONNECTED>(ctx_->events, msg);
   }
 }
 
@@ -136,7 +136,7 @@ void WsHandler::cleanup_clients() {
     for (int i = 0; i < old_count; i++) {
       ws_message_t msg = {};
       msg.sockfd = removed[i];
-      ctx_->events.post(APP_EVENTS_BASE, app_event_id_t::WS_CLIENT_DISCONNECTED, msg);
+      postEvent<app_event_id_t::WS_CLIENT_DISCONNECTED>(ctx_->events, msg);
     }
   }
 }
@@ -284,8 +284,8 @@ esp_err_t WsHandler::ws_handler(httpd_req_t *req) {
     return ret;
   }
 
-  self->ctx_->events.postSized(APP_EVENTS_BASE, app_event_id_t::WS_MESSAGE_RECEIVED,
-                               msg.get(), totalSize);
+  postSizedEvent<app_event_id_t::WS_MESSAGE_RECEIVED>(
+      self->ctx_->events, msg.get(), totalSize);
   // ← payload копируется event loop'ом, здесь буфер уже не нужен;
   // освободит unique_ptr (и на раннем return выше — тоже).
   return ESP_OK;
@@ -362,8 +362,8 @@ esp_err_t WsHandler::reg(httpd_handle_t server) {
   // жизни объекта: при рестарте httpd (NetworkController) reg() вызывается
   // повторно, а дубли подписок исчерпали бы пул EventManager.
   if (!subs_registered_) {
-    if (!ctx_->events.subscribe(APP_EVENTS_BASE, app_event_id_t::WS_MESSAGE_SEND,
-                                &WsHandler::onWsMessageSend, this)) {
+    if (!subscribeEvent<app_event_id_t::WS_MESSAGE_SEND>(
+            ctx_->events, &WsHandler::onWsMessageSend, this)) {
       ESP_LOGE(TAG, "subscribe(WS_MESSAGE_SEND) failed");
       return ESP_FAIL;
     }

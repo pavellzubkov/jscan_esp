@@ -212,10 +212,10 @@ esp_err_t ConfigStore::begin() {
     // следующем тике. Также ловим FACTORY_RESET → сброс + рестарт.
     // Отказ подписки = отказ модуля (critical): dtor снимет частичные подписки
     // и удалит автосейв-задачу.
-    if (!ctx_->events.subscribe(APP_EVENTS_BASE, app_event_id_t::CONFIG_CHANGED,
-                                &ConfigStore::onConfigChanged, this) ||
-        !ctx_->events.subscribe(APP_EVENTS_BASE, app_event_id_t::FACTORY_RESET,
-                                &ConfigStore::reset, this)) {
+    if (!subscribeEvent<app_event_id_t::CONFIG_CHANGED>(
+            ctx_->events, &ConfigStore::onConfigChanged, this) ||
+        !subscribeEvent<app_event_id_t::FACTORY_RESET>(
+            ctx_->events, &ConfigStore::reset, this)) {
         ESP_LOGE(TAG, "event subscribe failed");
         return ESP_FAIL;
     }

@@ -51,7 +51,7 @@ void WifiApModule::onEvent(esp_event_base_t base, int32_t id, void* /*data*/) {
     status.num_clients = staList.num;
     status.rssi = 0;
     status.disconnect_reason = 0;
-    ctx_->events.post(APP_EVENTS_BASE, app_event_id_t::WIFI_STATUS, status);
+    postEvent<app_event_id_t::WIFI_STATUS>(ctx_->events, status);
 }
 
 // Парсинг "a.b.c.d" в uint32 в network byte order (формат esp_ip4_addr_t.addr).
@@ -145,14 +145,14 @@ esp_err_t WifiApModule::begin() {
 
     // Live-apply: переприменять конфиг AP при изменении WIFI-полей (с дебаунсом)
     // и по отложенному событию WIFI_REAPPLY.
-    if (!ctx_->events.subscribe(APP_EVENTS_BASE, app_event_id_t::CONFIG_CHANGED,
-                                &WifiApModule::onConfigChanged, this)) {
+    if (!subscribeEvent<app_event_id_t::CONFIG_CHANGED>(
+            ctx_->events, &WifiApModule::onConfigChanged, this)) {
         ESP_LOGE(TAG, "subscribe(CONFIG_CHANGED) failed");
         stop();
         return ESP_FAIL;
     }
-    if (!ctx_->events.subscribe(APP_EVENTS_BASE, app_event_id_t::WIFI_REAPPLY,
-                                &WifiApModule::onWifiReapply, this)) {
+    if (!subscribeEvent<app_event_id_t::WIFI_REAPPLY>(
+            ctx_->events, &WifiApModule::onWifiReapply, this)) {
         ESP_LOGE(TAG, "subscribe(WIFI_REAPPLY) failed");
         stop();
         return ESP_FAIL;
@@ -267,7 +267,7 @@ void WifiApModule::scheduleReapply() {
 void WifiApModule::reapplyTimerCb(void* arg) {
     auto* self = static_cast<WifiApModule*>(arg);
     if (self && self->ctx_) {
-        self->ctx_->events.post(APP_EVENTS_BASE, app_event_id_t::WIFI_REAPPLY);
+        postEvent<app_event_id_t::WIFI_REAPPLY>(self->ctx_->events);
     }
 }
 

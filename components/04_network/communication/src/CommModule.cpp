@@ -41,16 +41,16 @@ CommunicationModule::~CommunicationModule()
 esp_err_t CommunicationModule::begin()
 {
     const bool subsOk =
-        ctx_->events.subscribe(APP_EVENTS_BASE, app_event_id_t::WS_MESSAGE_RECEIVED,
-                               &CommunicationModule::onIncomingPacket, this) &&
-        ctx_->events.subscribe(APP_EVENTS_BASE, app_event_id_t::WS_CLIENT_CONNECTED,
-                               &CommunicationModule::onWsClientConnected, this) &&
-        ctx_->events.subscribe(APP_EVENTS_BASE, app_event_id_t::WS_CLIENT_DISCONNECTED,
-                               &CommunicationModule::onWsClientDisconnected, this) &&
-        ctx_->events.subscribe(APP_EVENTS_BASE, app_event_id_t::WIFI_STATUS,
-                               &CommunicationModule::onWifiStatus, this) &&
-        ctx_->events.subscribe(APP_EVENTS_BASE, app_event_id_t::COMMUNICATION_SEND,
-                               &CommunicationModule::onCommunicationSend, this);
+        subscribeEvent<app_event_id_t::WS_MESSAGE_RECEIVED>(
+            ctx_->events, &CommunicationModule::onIncomingPacket, this) &&
+        subscribeEvent<app_event_id_t::WS_CLIENT_CONNECTED>(
+            ctx_->events, &CommunicationModule::onWsClientConnected, this) &&
+        subscribeEvent<app_event_id_t::WS_CLIENT_DISCONNECTED>(
+            ctx_->events, &CommunicationModule::onWsClientDisconnected, this) &&
+        subscribeEvent<app_event_id_t::WIFI_STATUS>(
+            ctx_->events, &CommunicationModule::onWifiStatus, this) &&
+        subscribeEvent<app_event_id_t::COMMUNICATION_SEND>(
+            ctx_->events, &CommunicationModule::onCommunicationSend, this);
     if (!subsOk)
     {
         ESP_LOGE(TAG, "event subscribe failed, abort start");
@@ -162,7 +162,7 @@ void CommunicationModule::onIncomingPacket(const ws_message_t* msg)
     case J1939Proto::kMsgTypeFactoryReset:
     {
         ESP_LOGW(TAG, "FACTORY_RESET requested by WS client %d", msg->sockfd);
-        ctx_->events.post(APP_EVENTS_BASE, app_event_id_t::FACTORY_RESET);
+        postEvent<app_event_id_t::FACTORY_RESET>(ctx_->events);
         break;
     }
     default:
