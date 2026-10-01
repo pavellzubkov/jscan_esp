@@ -4,6 +4,7 @@
 #include "esp_twai_types.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
+#include "freertos/semphr.h"
 #include <cstdint>
 
 // «Глупый» драйвер TWAI: без AppContext, без событий, без задач приложения.
@@ -41,8 +42,11 @@ public:
     // Возвращает false, если узел не создан (begin не вызывался).
     bool getStatus(Status& out) const;
 
-    // Передача extended-кадра. Не блокирует навсегда: ждёт окончания передачи
-    // до timeout (0 = не ждать). Колбэк/узел уже создан в begin.
+    // Передача extended-кадра. Сериализована внутренним мьютексом (кадр живёт
+    // в пуле TX-блоков драйвера). Не блокирует навсегда: ждёт окончания
+    // передачи до timeout (0 = не ждать — ESP_OK значит «кадр поставлен»).
+    // Возвращает ESP_ERR_TIMEOUT, если кадр не поставлен (очередь драйвера
+    // занята) либо передача не завершилась за timeout (кадр ещё может уйти).
     esp_err_t transmit(uint32_t id, const uint8_t* data, uint8_t dlc,
                        TickType_t timeout = pdMS_TO_TICKS(100));
 
@@ -65,9 +69,31 @@ private:
 
     struct RxSlot;    // полное определение — в .cpp
 
+    // TX-блок: драйвер TWAI НЕ копирует кадр — twai_frame_queue хранит
+    // указатель на twai_frame_t (twai_frame_queue.c: «.data = data»), а
+    // _node_queue_tx держит frame->buffer до завершения передачи. Поэтому
+    // буфер нельзя размещать на стеке: блок живёт в пуле драйвера и
+    // освобождается только когда узел гарантированно простаивает.
+    struct TxBlock {
+        twai_frame_t frame;
+        uint8_t      data[TWAI_FRAME_MAX_LEN];
+        bool         inUse = false;
+    };
+
+    // Освобождение ресурсов, выделенных частично в begin() (см. .cpp):
+    // очереди, слоты, TX-пул, мьютекс. Все хэндлы обнуляются — end() остаётся
+    // идемпотентным. Вызывать только при node_ == nullptr.
+    void cleanupPartial();
+
+    // Слоты пула TX-блоков больше никем не используются (узел простаивает).
+    void releaseTxBlocks();
+
     twai_node_base* node_          = nullptr;
     QueueHandle_t   rxReadyQueue_  = nullptr;
     QueueHandle_t   rxFreeQueue_   = nullptr;
     Config          cfg_           = {};
     RxSlot*         slots_         = nullptr;
+    TxBlock*        txPool_        = nullptr;
+    uint16_t        txPoolSize_    = 0;
+    SemaphoreHandle_t txMux_       = nullptr;   // сериализация transmit()/end()
 };

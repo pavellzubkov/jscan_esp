@@ -1,9 +1,12 @@
 #include "TwaiDriver.h"
 
+#include "esp_log.h"
 #include "esp_twai.h"
 #include "esp_twai_onchip.h"
 #include <cstring>
 #include <new>
+
+static const char* TAG = "TwaiDriver";
 
 // Слот приёма: буфер данных + фрейм, заполняемый в ISR-колбэке.
 // Определение вложенного типа (объявлен в TwaiDriver.h как RxSlot).
@@ -36,6 +39,46 @@ bool TwaiDriver::rxDoneCb(twai_node_handle_t node,
     return (hpw == pdTRUE);
 }
 
+// Частичная очистка: вызывается на каждом error-path begin() и в end().
+// node_ на момент вызова должен быть nullptr — узел удаляется отдельно.
+// После очистки все хэндлы обнулены, поэтому end() идемпотентен.
+void TwaiDriver::cleanupPartial()
+{
+    delete[] slots_;
+    slots_ = nullptr;
+
+    if (rxFreeQueue_ != nullptr)
+    {
+        vQueueDelete(rxFreeQueue_);
+        rxFreeQueue_ = nullptr;
+    }
+    if (rxReadyQueue_ != nullptr)
+    {
+        vQueueDelete(rxReadyQueue_);
+        rxReadyQueue_ = nullptr;
+    }
+
+    delete[] txPool_;
+    txPool_ = nullptr;
+    txPoolSize_ = 0;
+
+    if (txMux_ != nullptr)
+    {
+        vSemaphoreDelete(txMux_);
+        txMux_ = nullptr;
+    }
+}
+
+// Узел простаивает (hw_busy == 0 и очередь TX пуста) — значит драйвер больше
+// не держит указатели ни на один TX-блок: все можно вернуть в пул.
+void TwaiDriver::releaseTxBlocks()
+{
+    if (txPool_ == nullptr)
+        return;
+    for (uint16_t i = 0; i < txPoolSize_; i++)
+        txPool_[i].inUse = false;
+}
+
 esp_err_t TwaiDriver::begin(const Config& cfg)
 {
     if (node_ != nullptr)
@@ -43,15 +86,38 @@ esp_err_t TwaiDriver::begin(const Config& cfg)
 
     cfg_ = cfg;
 
+    // Сериализует transmit()/end(): TX-пул и узел — общие ресурсы
+    txMux_ = xSemaphoreCreateMutex();
+    if (txMux_ == nullptr)
+        return ESP_ERR_NO_MEM;
+
     // Пул слотов для передачи кадров из ISR в задачу
     rxFreeQueue_ = xQueueCreate(cfg_.rxSlots, sizeof(RxSlot*));
     rxReadyQueue_ = xQueueCreate(cfg_.rxSlots, sizeof(RxSlot*));
     if (rxFreeQueue_ == nullptr || rxReadyQueue_ == nullptr)
+    {
+        cleanupPartial();
         return ESP_ERR_NO_MEM;
+    }
 
     slots_ = new (std::nothrow) RxSlot[cfg_.rxSlots];
     if (slots_ == nullptr)
+    {
+        cleanupPartial();
         return ESP_ERR_NO_MEM;
+    }
+
+    // Пул TX-блоков: драйвер удерживает указатель на кадр до завершения
+    // передачи (даже дольше — при таймауте wait_all_done). Размер на два
+    // блока больше очереди драйвера (узел + txQueueDepth), чтобы новый кадр
+    // всегда имел свободный блок, пока старые ещё в полёте.
+    txPoolSize_ = static_cast<uint16_t>(cfg_.txQueueDepth) + 2;
+    txPool_ = new (std::nothrow) TxBlock[txPoolSize_];
+    if (txPool_ == nullptr)
+    {
+        cleanupPartial();
+        return ESP_ERR_NO_MEM;
+    }
 
     for (uint8_t i = 0; i < cfg_.rxSlots; i++)
     {
@@ -74,7 +140,10 @@ esp_err_t TwaiDriver::begin(const Config& cfg)
 
     esp_err_t err = twai_new_node_onchip(&node_config, &node_);
     if (err != ESP_OK)
+    {
+        cleanupPartial();
         return err;
+    }
 
     // Колбэки регистрируются до запуска узла (узел в состоянии stopped)
     twai_event_callbacks_t cbs = {};
@@ -84,6 +153,7 @@ esp_err_t TwaiDriver::begin(const Config& cfg)
     {
         twai_node_delete(node_);
         node_ = nullptr;
+        cleanupPartial();
         return err;
     }
 
@@ -92,6 +162,7 @@ esp_err_t TwaiDriver::begin(const Config& cfg)
     {
         twai_node_delete(node_);
         node_ = nullptr;
+        cleanupPartial();
         return err;
     }
 
@@ -100,6 +171,12 @@ esp_err_t TwaiDriver::begin(const Config& cfg)
 
 void TwaiDriver::end()
 {
+    // Мьютекс дожидается transmit(), уже зашедшего в другую задачу; сам же
+    // end() должен вызываться после остановки задачи-отправителя (как и
+    // раньше — иначе узел удалялся бы под передачей).
+    if (txMux_ != nullptr)
+        xSemaphoreTake(txMux_, portMAX_DELAY);
+
     if (node_ != nullptr)
     {
         twai_node_disable(node_);
@@ -107,19 +184,10 @@ void TwaiDriver::end()
         node_ = nullptr;
     }
 
-    delete[] slots_;
-    slots_ = nullptr;
+    if (txMux_ != nullptr)
+        xSemaphoreGive(txMux_);
 
-    if (rxFreeQueue_ != nullptr)
-    {
-        vQueueDelete(rxFreeQueue_);
-        rxFreeQueue_ = nullptr;
-    }
-    if (rxReadyQueue_ != nullptr)
-    {
-        vQueueDelete(rxReadyQueue_);
-        rxReadyQueue_ = nullptr;
-    }
+    cleanupPartial();
 }
 
 esp_err_t TwaiDriver::transmit(uint32_t id, const uint8_t* data, uint8_t dlc,
@@ -129,26 +197,76 @@ esp_err_t TwaiDriver::transmit(uint32_t id, const uint8_t* data, uint8_t dlc,
         return ESP_ERR_INVALID_STATE;
     if (dlc > TWAI_FRAME_MAX_LEN || (dlc > 0 && data == nullptr))
         return ESP_ERR_INVALID_ARG;
+    if (txMux_ == nullptr || txPool_ == nullptr || txPoolSize_ == 0)
+        return ESP_ERR_INVALID_STATE;
 
-    // Локальные буферы на стеке: безопасно для параллельных вызовов, т.к.
-    // передача завершается wait_all_done до выхода из функции.
-    twai_frame_t tx_frame = {};
-    uint8_t txData[TWAI_FRAME_MAX_LEN] = {};
-    if (dlc > 0)
-        memcpy(txData, data, dlc);
+    // RAII-гарантия возврата мьютекса на всех путях возврата
+    struct TxLock {
+        SemaphoreHandle_t m;
+        explicit TxLock(SemaphoreHandle_t s) : m(s) { xSemaphoreTake(m, portMAX_DELAY); }
+        ~TxLock() { xSemaphoreGive(m); }
+    } lock(txMux_);
 
-    tx_frame.header.id = id;
-    tx_frame.header.ide = 1;    // extended (29-бит ID)
-    tx_frame.header.dlc = dlc;
-    tx_frame.buffer = txData;
-    tx_frame.buffer_len = dlc;
+    // Узел простаивает → ни один TX-блок больше не нужен драйверу
+    if (twai_node_transmit_wait_all_done(node_, 0) == ESP_OK)
+        releaseTxBlocks();
 
-    esp_err_t res = twai_node_transmit(node_, &tx_frame, 0);
-    if (res == ESP_OK)
+    // Свободный блок из пула (кадр и буфер данных живут в драйвере)
+    TxBlock* blk = nullptr;
+    for (uint16_t i = 0; i < txPoolSize_; i++)
     {
-        // Драйвер держит указатель на фрейм до конца передачи, ждём завершения
-        twai_node_transmit_wait_all_done(node_, (int)pdTICKS_TO_MS(timeout));
+        if (!txPool_[i].inUse)
+        {
+            blk = &txPool_[i];
+            break;
+        }
     }
+
+    if (blk == nullptr)
+    {
+        // Пул исчерпан: кадры ещё в полёте — ждём их окончания в пределах
+        // отведённого времени, затем возвращаем блоки в пул
+        esp_err_t w = twai_node_transmit_wait_all_done(node_, (int)pdTICKS_TO_MS(timeout));
+        if (w != ESP_OK)
+        {
+            ESP_LOGW(TAG, "tx pool busy, frame dropped (id=0x%lX)", (unsigned long)id);
+            return ESP_ERR_TIMEOUT;
+        }
+        releaseTxBlocks();
+        blk = &txPool_[0];
+    }
+
+    // Блок занимаем ДО вызова драйвера: он сохраняет указатели на frame/buffer
+    blk->inUse = true;
+    blk->frame = {};
+    blk->frame.header.id = id;
+    blk->frame.header.ide = 1;    // extended (29-бит ID)
+    blk->frame.header.dlc = dlc;
+    blk->frame.buffer = blk->data;
+    blk->frame.buffer_len = dlc;
+    if (dlc > 0)
+        memcpy(blk->data, data, dlc);
+
+    esp_err_t res = twai_node_transmit(node_, &blk->frame, 0);
+    if (res != ESP_OK)
+    {
+        // Кадр не попал в очередь драйвера — блок никем не занят
+        blk->inUse = false;
+        return res;
+    }
+
+    if (timeout == 0)
+        return ESP_OK;   // не ждали: блок освободит следующий transmit()/end()
+
+    // Драйвер держит указатели до конца передачи — ждём её окончания.
+    // При таймауте блок остаётся занятым (кадр ещё может уйти в шину) и
+    // будет возвращён в пул, когда узел простеет.
+    res = twai_node_transmit_wait_all_done(node_, (int)pdTICKS_TO_MS(timeout));
+    if (res == ESP_OK)
+        releaseTxBlocks();
+    else
+        ESP_LOGW(TAG, "tx wait %s (id=0x%lX, frame may still be in flight)",
+                 esp_err_to_name(res), (unsigned long)id);
     return res;
 }
 

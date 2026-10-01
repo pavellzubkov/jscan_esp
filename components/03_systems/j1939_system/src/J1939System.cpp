@@ -144,7 +144,10 @@ void J1939System::sendRequest(const j1939_request_t& req)
     uint16_t txTimeoutMs = 100;
     ctx_->fields.getByName("canTxTimeoutMs", txTimeoutMs);
 
-    twai_.transmit(id, buf, sizeof(buf), pdMS_TO_TICKS(txTimeoutMs));
+    esp_err_t txErr = twai_.transmit(id, buf, sizeof(buf), pdMS_TO_TICKS(txTimeoutMs));
+    if (txErr != ESP_OK)
+        ESP_LOGW(TAG, "RQST pgn=%lu tx failed: %s", (unsigned long)req.pgn,
+                 esp_err_to_name(txErr));
 }
 
 void J1939System::onWsClientConnected(const ws_message_t* /*msg*/)

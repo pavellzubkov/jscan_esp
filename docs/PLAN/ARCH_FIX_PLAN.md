@@ -318,7 +318,7 @@ wire-формат `{len u8, bytes}`. Первый байт строки (сим�
 
 ---
 
-## Шаг 6. TwaiDriver: утечки error-path + TX-буфер
+## Шаг 6. TwaiDriver: утечки error-path + TX-буфер ✔
 
 **Цель.** Убрать утечки очередей/слотов при ошибке `begin()` и сделать
 ожидание передачи достоверным.
@@ -364,6 +364,18 @@ wire-формат `{len u8, bytes}`. Первый байт строки (сим�
 остаться корректным и после частичного `begin()`.
 
 **Проверка.** `idf.py build`.
+
+**Выполнено (решение по буферу).** Проверено по IDF 6.1: `twai_frame_queue.c`
+хранит указатель на `twai_frame_t` (`.data = data`), а `_node_queue_tx`
+(`esp_twai_onchip.c:613`) держит `frame->buffer` — копирования нет, стек
+недопустим. Вместо `malloc+pendingTxbuf_` сделан **пул TX-блоков**
+`txPool_[txQueueDepth+2]` (члены класса, размер ≥ очереди драйвера + 2 —
+свободный блок всегда есть, пока старые в полёте); освобождение блоков —
+только когда `wait_all_done` подтвердил простой узла; `transmit()`
+сериализован мьютексом (RAII), результат wait логируется и возвращается
+(в т.ч. `ESP_ERR_TIMEOUT`); `sendRequest` в `J1939System.cpp` логирует
+ошибку. Ошибка любого error-path `begin()` → `cleanupPartial()` (очереди,
+слоты, TX-пул, мьютекс), `end()` использует тот же helper.
 
 **СТОП.** Шаг завершён: сборка прошла. Следующий шаг — только по новой
 команде.
@@ -797,7 +809,7 @@ N рестартов, и валидный IP из любого источник�
 | 3 | Type-confusion слотов unsubscribe | EventManager.h | ☑ |
 | 4 | Безлимитный malloc control-frame; client_count_ вне лока | WsHandler.cpp/.hpp, AppEvents.h | ☑ |
 | 5 | Запись FixedString всегда OUT_OF_RANGE | FieldRegistry.h/.cpp, SystemStatusModule.cpp | ☑ |
-| 6 | Утечки error-path begin(); TX-wait игнорируется | TwaiDriver.cpp | ☐ |
+| 6 | Утечки error-path begin(); TX-wait игнорируется | TwaiDriver.cpp | ☑ |
 | 7 | N рестартов AP на пачку; невалидный IP | WifiApModule, FieldRegistry.cpp | ☐ |
 | 8 | PUSH-спам телеметрии; лок при post; маг. состояния | J1939System.cpp | ☐ |
 | 9 | Дубль sendFrame; хрупкий NACK `st-1` | CommModule.cpp | ☐ |
