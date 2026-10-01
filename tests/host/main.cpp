@@ -239,6 +239,72 @@ static void test_snapshot_accumulator() {
     CHECK(n == 1 && recs[0].len == 4);
     CHECK(recs[0].data() == recs[0].smallData);   // bigData освобождён
     CHECK(std::memcmp(recs[0].data(), small, sizeof(small)) == 0);
+
+    // Регрессия UAF: большая запись, collect() дважды подряд (уплотнение
+    // обязано переносить владение bigData, а не дублировать), затем
+    // update() того же ключа с bigData и ещё collect().
+    SnapshotAccumulator acc5;
+    uint8_t big2[64];
+    for (size_t i = 0; i < sizeof(big2); ++i)
+        big2[i] = static_cast<uint8_t>(i);
+    acc5.update(1, 0x600, big2, sizeof(big2), 100);
+    acc5.update(2, 0x601, d, 8, 110);        // сдвиг при уплотнении
+    n = acc5.collect(recs, 150, 1000);
+    CHECK(n == 2);
+    n = acc5.collect(recs, 160, 1000);       // второй collect без изменений
+    CHECK(n == 2);
+    CHECK(recs[0].data() != recs[0].smallData &&
+          std::memcmp(recs[0].data(), big2, sizeof(big2)) == 0);
+    uint8_t big3[100];
+    std::memset(big3, 0xCD, sizeof(big3));
+    acc5.update(1, 0x600, big3, sizeof(big3), 200);   // перезапись bigData
+    n = acc5.collect(recs, 250, 1000);
+    CHECK(n == 2);
+    bool found600 = false;
+    for (size_t i = 0; i < n; ++i) {
+        if (recs[i].sa == 1 && recs[i].pgn == 0x600) {
+            found600 = true;
+            CHECK(recs[i].len == 100);
+            CHECK(std::memcmp(recs[i].data(), big3, sizeof(big3)) == 0);
+        }
+    }
+    CHECK(found600);
+    // Вытеснение после дублирования не должно ронять программу (ASan).
+    acc5.update(3, 0x602, big3, sizeof(big3), 300);
+    acc5.update(4, 0x603, big3, sizeof(big3), 301);
+    n = acc5.collect(recs, 350, 100000);
+    CHECK(n == 4);
+    CHECK(acc5.count() == 4);
+
+    // 128 слотов большими записей → collect() → вытеснение старой.
+    SnapshotAccumulator acc6;
+    uint8_t bigRec[40];
+    std::memset(bigRec, 0xEE, sizeof(bigRec));
+    for (int i = 0; i < 128; ++i)
+        acc6.update(1, static_cast<uint32_t>(i), bigRec, sizeof(bigRec),
+                    static_cast<uint32_t>(i) + 1);
+    CHECK(acc6.count() == 128);
+    n = acc6.collect(recs, 200, 100000);
+    CHECK(n == 128);
+    CHECK(acc6.count() == 128);
+    acc6.update(2, 0xFFFF, bigRec, sizeof(bigRec), 300);   // вытеснение
+    CHECK(acc6.count() == 128);
+    n = acc6.collect(recs, 400, 100000);
+    CHECK(n == 128);
+    CHECK(acc6.count() == 128);
+
+    // TTL-инвалидация: протухшая запись с bigData освобождает слот.
+    SnapshotAccumulator acc7;
+    acc7.update(1, 0x700, big2, sizeof(big2), 100);
+    CHECK(acc7.count() == 1);
+    n = acc7.collect(recs, 100 + 1001, 1000);   // TTL истёк
+    CHECK(n == 0);
+    CHECK(acc7.count() == 0);
+    // Слот свободен для новой записи.
+    acc7.update(2, 0x701, d, 8, 5000);
+    CHECK(acc7.count() == 1);
+    n = acc7.collect(recs, 5000, 1000);
+    CHECK(n == 1 && recs[0].sa == 2);
 }
 
 // ============================================================

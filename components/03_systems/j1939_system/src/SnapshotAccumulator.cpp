@@ -111,13 +111,32 @@ size_t SnapshotAccumulator::collect(const Record*& out, uint32_t nowMs,
     size_t n = 0;
     for (size_t i = 0; i < kMaxRecords; ++i)
     {
-        const Record& r = records_[i];
+        Record& r = records_[i];
         if (!r.valid)
             continue;
+        // Протухшая запись — освобождаем буфер и слот (иначе bigData
+        // висит до вытеснения, count_ завышает activePgns).
         if ((nowMs - r.lastTsMs) > ttlMs)
+        {
+            if (r.bigData)
+            {
+                free(r.bigData);
+                r.bigData = nullptr;
+            }
+            r.valid = false;
+            if (count_ > 0)
+                --count_;
             continue;
+        }
         if (n != i)
-            records_[n] = r;   // уплотняем активные в начало
+        {
+            // Уплотняем: переносим владение bigData в слот n, исходный
+            // слот освобождаем (иначе два слота с общим указателем →
+            // double-free/UAF при вытеснении).
+            records_[n] = r;
+            records_[i].bigData = nullptr;
+            records_[i].valid = false;
+        }
         ++n;
     }
     out = records_;
