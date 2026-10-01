@@ -10,6 +10,20 @@
 
 namespace {
 const char* TAG = "Comm";
+
+// Коды ошибок PARAM_NACK (PROTOCOL-J1939 §5): 0=unknown 1=readonly
+// 2=range 3=len. Соответствие FieldWriteStatus — только здесь.
+uint8_t nackCodeFromStatus(FieldWriteStatus st)
+{
+    switch (st)
+    {
+    case FieldWriteStatus::UNKNOWN_UID:     return 0;
+    case FieldWriteStatus::READONLY_DENIED: return 1;
+    case FieldWriteStatus::OUT_OF_RANGE:    return 2;
+    case FieldWriteStatus::BAD_LENGTH:      return 3;
+    default:                                return 0;
+    }
+}
 }
 
 CommunicationModule::CommunicationModule(AppContext* ctx)
@@ -124,8 +138,7 @@ void CommunicationModule::onIncomingPacket(const ws_message_t* msg)
             uid, payload + 2, payloadLen - 2, FieldDomain::PROTOCOL);
         if (st != FieldWriteStatus::OK)
         {
-            // 0=unknown 1=readonly 2=range 3=len (FieldWriteStatus минус единица)
-            sendNack(uid, static_cast<uint8_t>(st) - 1, msg->sockfd);
+            sendNack(uid, nackCodeFromStatus(st), msg->sockfd);
             break;
         }
 
@@ -160,40 +173,12 @@ void CommunicationModule::onSnapshot(const j1939_snapshot_t* snap)
     if (!snap || snap->length == 0)
         return;
 
-    const size_t frameCap = J1939Proto::kHeaderSize + snap->length +
-                            J1939Proto::kCrcSize;
-    uint8_t* frame = static_cast<uint8_t*>(malloc(frameCap));
-    if (!frame)
-        return;
-
-    const size_t frameLen = J1939Proto::wrapFrame(
-        J1939Proto::kMsgTypeSnapshot, J1939Proto::kFlagSnapshot, snap->data,
-        snap->length, tx_seq_++, frame, frameCap);
-    if (frameLen == 0)
-    {
-        free(frame);
-        return;
-    }
-
-    const size_t msgSize = sizeof(ws_message_t) + frameLen;
-    ws_message_t* msg = static_cast<ws_message_t*>(malloc(msgSize));
-    if (!msg)
-    {
-        free(frame);
-        return;
-    }
-
-    msg->sockfd = -1;   // broadcast всем WS-клиентам
-    msg->length = frameLen;
-    memcpy(msg->data, frame, frameLen);
-    free(frame);
-
-    ctx_->events.postSized(APP_EVENTS_BASE, app_event_id_t::WS_MESSAGE_SEND,
-                           msg, msgSize);
-    free(msg);
-
+    // Тот же путь, что и для любых исходящих кадров: malloc frame →
+    // wrapFrame → malloc ws_message → postSized → free.
     ESP_LOGD(TAG, "snapshot %u B, n=%u", (unsigned)snap->length,
              (unsigned)snap->data[0]);
+    sendFrame(J1939Proto::kMsgTypeSnapshot, J1939Proto::kFlagSnapshot,
+              snap->data, snap->length, -1);
 }
 
 // Обёртка готового payload в кадр + отправка WS-клиенту(ам).

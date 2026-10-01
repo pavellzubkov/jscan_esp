@@ -22,11 +22,27 @@ constexpr uint32_t kTelemetryPeriodMs = 1000;
 // Битрейт применяется драйвером TWAI только из этого набора (см. canBitrate).
 constexpr uint32_t kAllowedBitrates[] = {125000, 250000, 500000, 1000000};
 
+// Значения runtime-поля twaiState (TwaiFields.inc: «0=STOPPED 1=RUNNING
+// 2=BUS_OFF 3=RECOVERING») — вместо магических чисел в теле.
+enum TwaiStatePub : uint8_t {
+    kStateStopped   = 0,
+    kStateRunning   = 1,
+    kStateBusOff    = 2,
+    kStateRecovering = 3,
+};
+
 bool isValidBitrate(uint32_t br)
 {
     for (uint32_t b : kAllowedBitrates)
         if (b == br) return true;
     return false;
+}
+
+// Ошибки TWAI драйвер считает в uint32_t, а поля twaiTxErr/twaiRxErr
+// описаны диапазоном 0..255 — усекаем, чтобы запись не ушла OUT_OF_RANGE.
+uint8_t clampErrCnt(uint32_t v)
+{
+    return v > 255 ? 255 : static_cast<uint8_t>(v);
 }
 }
 
@@ -259,54 +275,50 @@ void J1939System::taskLoop()
 
 void J1939System::updateTwaiStatus()
 {
-    AppDataLock dataLock(ctx_);   // атомарная публикация блока runtime-полей
-
+    // Публикация через updateField<T>(): AppDataLock удерживается только на
+    // чтении+записи, PUSH (COMMUNICATION_SEND → post, до 50 мс) уходит ПОСЛЕ
+    // снятия лока — писатели AppData не блокируются на отправке. Diff внутри
+    // updateField избавляет от ежесекундного PUSH-спама неизменённых полей.
     TwaiDriver::Status st;
     if (!twai_.getStatus(st))
     {
         // Драйвер не создан/остановлен — публикуем STOPPED.
-        ctx_->fields.writeFieldScalar(twaiState_UID, static_cast<uint8_t>(0));
-        ctx_->fields.writeFieldScalar(twaiStarted_UID, false);
-        sendField(ctx_, twaiState_UID);
-        sendField(ctx_, twaiStarted_UID);
+        updateField<uint8_t>(ctx_, twaiState_UID,
+                             static_cast<uint8_t>(kStateStopped));
+        updateField<bool>(ctx_, twaiStarted_UID, false);
         return;
     }
 
-    ctx_->fields.writeFieldScalar(twaiStarted_UID, true);
-    ctx_->fields.writeFieldScalar(twaiTxErr_UID, static_cast<uint8_t>(st.txErr));
-    ctx_->fields.writeFieldScalar(twaiRxErr_UID, static_cast<uint8_t>(st.rxErr));
-
+    uint8_t state = static_cast<uint8_t>(kStateRunning);
     if (st.state == TWAI_ERROR_BUS_OFF)
     {
-        ctx_->fields.writeFieldScalar(twaiState_UID, static_cast<uint8_t>(2));  // BUS_OFF
-
         bool canAutoRecover = false;
-        ctx_->fields.getByName("canAutoRecover", canAutoRecover);
+        {
+            AppDataLock lock(ctx_);   // чтение config-поля — под локом adata
+            ctx_->fields.getByName("canAutoRecover", canAutoRecover);
+        }
         if (canAutoRecover)
         {
             ESP_LOGW(TAG, "BUS_OFF detected, recovering");
             twai_.recover();
             ++twaiRecoverCount_;
-            ctx_->fields.writeFieldScalar(twaiRecoverCount_UID, twaiRecoverCount_);
             // Следующий опрос покажет реальное состояние после recover.
-            ctx_->fields.writeFieldScalar(twaiState_UID, static_cast<uint8_t>(3));  // RECOVERING
+            state = static_cast<uint8_t>(kStateRecovering);
+        }
+        else
+        {
+            state = static_cast<uint8_t>(kStateBusOff);
         }
     }
-    else
-    {
-        // ACTIVE/WARNING/PASSIVE — узел в сети (RUNNING).
-        ctx_->fields.writeFieldScalar(twaiState_UID, static_cast<uint8_t>(1));
-    }
+    // ACTIVE/WARNING/PASSIVE — узел в сети (RUNNING).
 
-    sendField(ctx_, twaiState_UID);
-    sendField(ctx_, twaiTxErr_UID);
-    sendField(ctx_, twaiRxErr_UID);
-    sendField(ctx_, twaiStarted_UID);
-    sendField(ctx_, twaiRecoverCount_UID);
-
-    ctx_->fields.writeFieldScalar(activePgns_UID,
-                                  static_cast<uint16_t>(acc_.count()));
-    sendField(ctx_, activePgns_UID);
+    updateField<bool>(ctx_, twaiStarted_UID, true);
+    updateField<uint8_t>(ctx_, twaiState_UID, state);
+    updateField<uint8_t>(ctx_, twaiTxErr_UID, clampErrCnt(st.txErr));
+    updateField<uint8_t>(ctx_, twaiRxErr_UID, clampErrCnt(st.rxErr));
+    updateField<uint32_t>(ctx_, twaiRecoverCount_UID, twaiRecoverCount_);
+    updateField<uint16_t>(ctx_, activePgns_UID,
+                          static_cast<uint16_t>(acc_.count()));
 }
 
 void J1939System::processFrame(const TwaiDriver::RxFrame& frame, uint32_t nowMs)

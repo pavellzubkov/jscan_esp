@@ -1,6 +1,7 @@
 #pragma once
 #include "AppContext.h"
 #include "AppEvents.h"
+#include <cstring>
 
 // Отправка одного поля по коммуникационному модулю (broadcast)
 inline void sendField(AppContext* ctx, uint16_t uid)

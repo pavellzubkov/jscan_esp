@@ -461,7 +461,7 @@ N рестартов, и валидный IP из любого источник�
 
 ---
 
-## Шаг 8. J1939System: телеметрия без спама и без лока при post
+## Шаг 8. J1939System: телеметрия без спама и без лока при post ✔
 
 **Цель.** Diff-рассылка runtime-полей TWAI, снятие `AppDataLock` с
 пути отправки, читаемые состояния.
@@ -514,12 +514,20 @@ N рестартов, и валидный IP из любого источник�
 
 **Проверка.** `idf.py build`.
 
-**СТОП.** Шаг завершён: сборка прошла. Следующий шаг — только по новой
-команде.
+**Выполнено.** `updateTwaiStatus()` переведён на `updateField<T>()` — лок
+удерживается только на чтении+записи, PUSH уходит после снятия лока, diff
+подавляет спам неизменённых полей. Состояния — enum `TwaiStatePub` в
+анонимном namespace, ошибки — `clampErrCnt()` (0..255). Чтение
+`canAutoRecover` — под коротким `AppDataLock`. В `LogicUtils.h` добавлен
+`#include <cstring>` (memcmp в шаблоне `updateField` объявляется в точке
+определения).
+
+**СТОП.** Шаг завершён: сборка прошла (и host-тесты `checks=102
+failures=0`). Следующий шаг — только по новой команде.
 
 ---
 
-## Шаг 9. CommModule: дедупликация отправки + таблица NACK-кодов
+## Шаг 9. CommModule: дедупликация отправки + таблица NACK-кодов ✔
 
 **Цель.** Убрать дубль malloc+wrap+post и хрупкий `static_cast - 1`.
 
@@ -566,6 +574,11 @@ N рестартов, и валидный IP из любого источник�
 сохранить лог в `sendFrame`-пут или до вызова.
 
 **Проверка.** `idf.py build`.
+
+**Выполнено.** `onSnapshot()` сведён к `sendFrame(kMsgTypeSnapshot,
+kFlagSnapshot, ..., -1)` (лог `n=` оставлен до вызова). NACK — функция
+`nackCodeFromStatus()` в анонимном namespace (0=unknown 1=readonly
+2=range 3=len); сверено с `PROTOCOL-J1939.md:79,158` — коды совпадают.
 
 **СТОП.** Шаг завершён: сборка прошла. Следующий шаг — только по новой
 команде.
@@ -811,8 +824,8 @@ N рестартов, и валидный IP из любого источник�
 | 5 | Запись FixedString всегда OUT_OF_RANGE | FieldRegistry.h/.cpp, SystemStatusModule.cpp | ☑ |
 | 6 | Утечки error-path begin(); TX-wait игнорируется | TwaiDriver.cpp | ☑ |
 | 7 | N рестартов AP на пачку; невалидный IP | WifiApModule, FieldRegistry.cpp | ☑ |
-| 8 | PUSH-спам телеметрии; лок при post; маг. состояния | J1939System.cpp | ☐ |
-| 9 | Дубль sendFrame; хрупкий NACK `st-1` | CommModule.cpp | ☐ |
+| 8 | PUSH-спам телеметрии; лок при post; маг. состояния | J1939System.cpp | ☑ |
+| 9 | Дубль sendFrame; хрупкий NACK `st-1` | CommModule.cpp | ☑ |
 | 10 | Утечка static_ctx_t; молчаливые ошибки регистрации | ServerModule, StaticHandler, OtaApi | ☐ |
 | 11 | OOB DNS-парсер; TP packets=0 | simple_dns_server.cpp, J1939TransportProtocol.cpp | ☐ |
 | 12 | Хардкод-дубли; maxTrackedPgns; subscribe() | HardwareConfig, TwaiFields, J1939System, WsHandler, AGENTS.md | ☐ |
