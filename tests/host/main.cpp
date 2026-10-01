@@ -49,7 +49,7 @@ static void test_proto() {
         {0x19, 0x123458, 8, d3, 250},
     };
     const size_t need = J1939Proto::batchPayloadSize(recs, 3);
-    CHECK(need == 1 + 3 * (1 + 3 + 1 + 8 + 2));   // 1 + 3*15 = 46
+    CHECK(need == 1 + 3 * (1 + 3 + 2 + 8 + 2));   // 1 + 3*16 = 49
 
     uint8_t buf[64];
     size_t n = J1939Proto::serializeBatch(buf, sizeof(buf), recs, 3);
@@ -57,6 +57,21 @@ static void test_proto() {
     CHECK(buf[0] == 3);   // count
     // Не влезает в маленький буфер.
     CHECK(J1939Proto::serializeBatch(buf, 10, recs, 3) == 0);
+
+    // Запись с len=300 (>255): длина поля — uint16 LE, данные не усечься.
+    uint8_t d300[300];
+    std::memset(d300, 0x5A, sizeof(d300));
+    J1939Proto::BatchRecord big{0x19, 0x123456, 300, d300, 1000};
+    const size_t needBig = J1939Proto::batchPayloadSize(&big, 1);
+    CHECK(needBig == 1 + (1 + 3 + 2 + 300 + 2));   // 309
+    uint8_t bigBuf[400];
+    size_t nb = J1939Proto::serializeBatch(bigBuf, sizeof(bigBuf), &big, 1);
+    CHECK(nb != 0 && nb == needBig);
+    CHECK(bigBuf[5] == 0x2C && bigBuf[6] == 0x01);           // len=300 LE
+    CHECK(std::memcmp(bigBuf + 7, d300, 300) == 0);          // data целиком
+    CHECK(bigBuf[307] == 0xE8 && bigBuf[308] == 0x03);       // periodMs=1000 LE
+    // Буфер меньше нужного — 0.
+    CHECK(J1939Proto::serializeBatch(bigBuf, needBig - 1, &big, 1) == 0);
 
     // wrapFrame / unwrapFrame (round-trip + битые кадры).
     uint8_t payload[3] = {1, 0xAA, 0xBB};

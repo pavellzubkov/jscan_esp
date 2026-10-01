@@ -46,13 +46,13 @@ uint16_t J1939Proto::crc16(const uint8_t* data, size_t len) {
     return crc;
 }
 
-// Размер payload батча: count + по 7 байт заголовка на запись + данные.
+// Размер payload батча: count + по 8 байт заголовка на запись + данные.
 size_t J1939Proto::batchPayloadSize(const BatchRecord* recs, size_t count) {
     size_t size = 1;   // count
     for (size_t i = 0; i < count; ++i) {
         size += 1;                // sa
         size += 3;                // pgn (24 бита, LE)
-        size += 1;                // len
+        size += 2;                // len u16 LE
         size += recs[i].len;      // data
         size += 2;                // periodMs
     }
@@ -73,7 +73,8 @@ size_t J1939Proto::serializeBatch(uint8_t* out, size_t outCap,
         out[pos++] = static_cast<uint8_t>(r.pgn & 0xFF);
         out[pos++] = static_cast<uint8_t>((r.pgn >> 8) & 0xFF);
         out[pos++] = static_cast<uint8_t>((r.pgn >> 16) & 0xFF);
-        out[pos++] = static_cast<uint8_t>(r.len);
+        out[pos++] = static_cast<uint8_t>(r.len & 0xFF);
+        out[pos++] = static_cast<uint8_t>((r.len >> 8) & 0xFF);
         for (uint16_t d = 0; d < r.len; ++d) {
             out[pos++] = r.data[d];
         }

@@ -90,7 +90,7 @@ uint8  count                       // количество записей (0..25
 repeat count:
   uint8   sa                       // source address (из CAN ID, 8 бит)
   uint32  pgn                      // LE, 24 бита (0..0x3FFFF)
-  uint8   len                      // длина data (1..1785)
+  uint16  len                      // LE, длина data (1..1785)
   uint8   data[len]                // сырые байты PGN (single-frame 8 байт;
                                    // multipacket — реасемблированный до 1785)
   uint16  periodMs                 // LE, наблюдаемый период обновления записи
@@ -111,10 +111,10 @@ repeat count:
 ### 3.2 Пример (упрощённый, 2 записи)
 
 ```
-[5A A5] [01] [20] [01 00] [0E 00] [00 00]          <- заголовок, payload=14
+[5A A5] [01] [20] [01 00] [21 00] [00 00]          <- заголовок, payload=33
   count=02
-  sa=00  pgn=00 F4 00 (65227)  len=08  data(8 байт)  periodMs=EA 00 (234)
-  sa=03  pgn=01 F4 00 (65228)  len=08  data(8 байт)  periodMs=EA 00 (234)
+  sa=00  pgn=00 F4 00 (65227)  len=08 00  data(8 байт)  periodMs=EA 00 (234)
+  sa=03  pgn=01 F4 00 (65228)  len=08 00  data(8 байт)  periodMs=EA 00 (234)
 [CRC lo][CRC hi]
 ```
 

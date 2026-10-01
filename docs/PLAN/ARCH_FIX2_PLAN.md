@@ -42,7 +42,7 @@ wsl -d Ubuntu-22.04 -- bash -lc "cd /mnt/e/Projects/Embedded/ESP32/J1939_scaner/
 | # | Шаг | Статус |
 |---|-----|--------|
 | 0 | Коммит ревью + плана (документы) | ☑ |
-| 1 | Протокол: `len` батча -> uint16 | ☐ |
+| 1 | Протокол: `len` батча -> uint16 | ☑ |
 | 2 | Rollback OTA: mark после health-check | ☐ |
 | 3 | OTA: дедлайн приёма + staging storage | ☐ |
 | 4 | EventManager: mutex пула + счётчики дропов | ☐ |
@@ -82,7 +82,7 @@ untracked) и этот план.
 
 ---
 
-## Шаг 1. Протокол: `len` батча -> uint16 LE
+## Шаг 1. Протокол: `len` батча -> uint16 LE ✔
 
 **Цель.** Закрыть ревью 2.1: поле длины записи батча пишется одним байтом
 (`static_cast<uint8_t>(r.len)`, `J1939Proto.cpp:76`) — TP-пакет >255 байт
