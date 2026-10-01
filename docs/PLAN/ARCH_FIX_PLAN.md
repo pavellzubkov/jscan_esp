@@ -117,7 +117,7 @@ wsl -d Ubuntu-22.04 -- bash -lc "cd /mnt/e/Projects/Embedded/ESP32/J1939_scaner/
 
 ---
 
-## Шаг 2. ConfigStore: OOB-read JSON + гонки dirty_/reset
+## Шаг 2. ConfigStore: OOB-read JSON + гонки dirty_/reset ✔
 
 **Цель.** Убрать чтение за границей буфера при парсинге конфига и две
 гонки записи.
@@ -156,7 +156,7 @@ wsl -d Ubuntu-22.04 -- bash -lc "cd /mnt/e/Projects/Embedded/ESP32/J1939_scaner/
 
 ---
 
-## Шаг 3. EventManager: unsubscribe → type-confusion слотов
+## Шаг 3. EventManager: unsubscribe → type-confusion слотов ✔
 
 **Цель.** Убрать латентную путаницу обработчиков при удалении модуля
 (error-path `BootManager::makeModule` → `delete` → `~Module` →
@@ -793,8 +793,8 @@ N рестартов, и валидный IP из любого источник�
 | # | Дефект | Файлы | Статус |
 |---|--------|-------|--------|
 | 1 | UAF/дубликаты bigData + TTL-утечка | SnapshotAccumulator.cpp | ☑ |
-| 2 | OOB-read config.json; гонки dirty_/reset | ConfigStore.cpp | ☐ |
-| 3 | Type-confusion слотов unsubscribe | EventManager.h | ☐ |
+| 2 | OOB-read config.json; гонки dirty_/reset | ConfigStore.cpp | ☑ |
+| 3 | Type-confusion слотов unsubscribe | EventManager.h | ☑ |
 | 4 | Безлимитный malloc control-frame; client_count_ вне лока | WsHandler.cpp/.hpp, AppEvents.h | ☐ |
 | 5 | Запись FixedString всегда OUT_OF_RANGE | FieldRegistry.h/.cpp, SystemStatusModule.cpp | ☐ |
 | 6 | Утечки error-path begin(); TX-wait игнорируется | TwaiDriver.cpp | ☐ |

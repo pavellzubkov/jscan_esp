@@ -37,8 +37,9 @@ private:
     struct MethodSlot;
     typedef void (MethodSlot::*MethodPtr)();
 
-    // Запись о подписке. handler_args обработчика указывает на элемент пула,
-    // поэтому пул фиксированной вместимости и не растёт.
+    // Запись о подписке. handler_args обработчика указывает на элемент пула —
+    // адрес слота стабилен на всё время жизни EventManager: слоты никогда
+    // не сдвигаются/не переиспользуются, пока inUse == true.
     struct Subscription {
         esp_event_base_t base;
         int32_t id;
@@ -46,24 +47,42 @@ private:
         esp_event_loop_handle_t loop;  // nullptr = системный (default) loop
         void* obj;
         MethodPtr method;
+        bool inUse;
     };
 
-    Subscription subscriptions_[kMaxSubscriptions];
-    size_t subscriptionCount_ = 0;
+    // Пул фиксированной вместимости, «дырчатый»: слоты занимаются/освобождаются
+    // по inUse, без уплотнения (перемещение слота сломало бы handler_args
+    // зарегистрированных обработчиков).
+    Subscription subscriptions_[kMaxSubscriptions]{};  // value-init: inUse=false
+    size_t subscriptionCount_ = 0;  // только для логов/статистики
 
-    // Выделить слот в пуле (без продвижения счётчика). nullptr, если пул полон.
+    // Выделить первый свободный слот. nullptr, если пул полон.
     Subscription* reserveSubscription() {
-        if (subscriptionCount_ >= kMaxSubscriptions) {
-            return nullptr;
+        for (size_t i = 0; i < kMaxSubscriptions; ++i) {
+            Subscription* s = &subscriptions_[i];
+            if (s->inUse) continue;
+            s->inUse = true;
+            s->base = nullptr;
+            s->id = 0;
+            s->instance = nullptr;
+            s->loop = nullptr;
+            s->obj = nullptr;
+            s->method = nullptr;
+            return s;
         }
-        Subscription* s = &subscriptions_[subscriptionCount_];
-        s->base = nullptr;
-        s->id = 0;
+        return nullptr;
+    }
+
+    // Освободить слот (после unregister) — без сдвига элементов пула.
+    void releaseSubscription(Subscription* s) {
+        s->inUse = false;
         s->instance = nullptr;
-        s->loop = nullptr;
         s->obj = nullptr;
         s->method = nullptr;
-        return s;
+        s->base = nullptr;
+        s->id = 0;
+        s->loop = nullptr;
+        if (subscriptionCount_ > 0) --subscriptionCount_;
     }
 
 public:
@@ -99,6 +118,7 @@ public:
             event_loop_, event_base, int_event_id, c_callback, sub,
             &sub->instance);
         if (err != ESP_OK) {
+            releaseSubscription(sub);  // слот не утекает при ошибке
             ESP_LOGE(TAG, "Failed to subscribe to event %d: %s",
                      int_event_id, esp_err_to_name(err));
             return false;
@@ -139,6 +159,7 @@ public:
             event_loop_, event_base, int_event_id, c_callback, sub,
             &sub->instance);
         if (err != ESP_OK) {
+            releaseSubscription(sub);  // слот не утекает при ошибке
             ESP_LOGE(TAG, "Failed to subscribe to event %d: %s",
                      int_event_id, esp_err_to_name(err));
             return false;
@@ -168,6 +189,7 @@ public:
             event_loop_, event_base, static_cast<int32_t>(event_id), handler,
             arg, &sub->instance);
         if (err != ESP_OK) {
+            releaseSubscription(sub);  // слот не утекает при ошибке
             ESP_LOGE(TAG, "Failed to subscribe to event %d: %s",
                      event_id, esp_err_to_name(err));
             return false;
@@ -197,6 +219,7 @@ public:
         esp_err_t err = esp_event_handler_instance_register(
             event_base, event_id, handler, arg, &sub->instance);
         if (err != ESP_OK) {
+            releaseSubscription(sub);  // слот не утекает при ошибке
             ESP_LOGE(TAG, "Failed to subscribe to event %d: %s",
                      event_id, esp_err_to_name(err));
             return nullptr;
@@ -281,14 +304,12 @@ public:
     // Снять все подписки данного объекта (идемпотентно). Нужен для модулей,
     // которые удаляются после подписки (delete в makeModule при ошибке begin()):
     // иначе обработчики указывают на удалённый объект (use-after-free).
+    // Слоты НЕ сдвигаются — только помечаются свободными (см. Subscription).
     void unsubscribe(void* obj) {
         if (!obj) return;
-        for (size_t i = 0; i < subscriptionCount_;) {
+        for (size_t i = 0; i < kMaxSubscriptions; i++) {
             Subscription* s = &subscriptions_[i];
-            if (s->obj != obj) {
-                i++;
-                continue;
-            }
+            if (!s->inUse || s->obj != obj) continue;
             if (s->instance) {
                 if (s->loop) {
                     esp_event_handler_instance_unregister_with(
@@ -298,29 +319,26 @@ public:
                                                           s->instance);
                 }
             }
-            // Заполняем дыру последним элементом пула
-            if (i != subscriptionCount_ - 1) {
-                subscriptions_[i] = subscriptions_[subscriptionCount_ - 1];
-            }
-            --subscriptionCount_;
-            // i не инкрементируем: на место i переехал последний элемент
+            releaseSubscription(s);
         }
     }
 
     // Снять все подписки (идемпотентно). Вызывается из ~EventManager и из
     // ~AppContext ДО esp_event_loop_delete, чтобы не работать с удалённым loop.
     void shutdown() {
-        for (size_t i = 0; i < subscriptionCount_; i++) {
+        for (size_t i = 0; i < kMaxSubscriptions; i++) {
             Subscription* s = &subscriptions_[i];
-            if (!s->instance) continue;
-            if (s->loop) {
-                esp_event_handler_instance_unregister_with(
-                    s->loop, s->base, s->id, s->instance);
-            } else {
-                esp_event_handler_instance_unregister(s->base, s->id,
-                                                      s->instance);
+            if (!s->inUse) continue;
+            if (s->instance) {
+                if (s->loop) {
+                    esp_event_handler_instance_unregister_with(
+                        s->loop, s->base, s->id, s->instance);
+                } else {
+                    esp_event_handler_instance_unregister(s->base, s->id,
+                                                          s->instance);
+                }
             }
-            s->instance = nullptr;
+            releaseSubscription(s);
         }
         subscriptionCount_ = 0;
     }

@@ -243,7 +243,9 @@ void ConfigStore::loadFromFs() {
         return;
     }
 
-    char* buf = static_cast<char*>(malloc(static_cast<size_t>(st.st_size)));
+    // st_size+1 и явный NUL: cJSON_Parse читает строку, буфер ровно в размер
+    // файла давал OOB-read за границей (мусор после данных ломал парсинг).
+    char* buf = static_cast<char*>(malloc(static_cast<size_t>(st.st_size) + 1));
     if (!buf) {
         close(fd);
         dirty_.store(true);
@@ -256,6 +258,7 @@ void ConfigStore::loadFromFs() {
         dirty_.store(true);
         return;
     }
+    buf[rd] = '\0';
 
     cJSON* root = cJSON_Parse(buf);
     free(buf);
@@ -358,6 +361,11 @@ size_t ConfigStore::applyFieldsWithNotify(cJSON* fields) {
 }
 
 void ConfigStore::saveToFs() {
+    // Сброс dirty_ ДО сборки JSON: изменение, пришедшее во время записи,
+    // снова поставит флаг → автосейв повторится. Сброс после записи терял
+    // бы такое изменение (гонка).
+    dirty_.exchange(false);
+
     cJSON* root = buildFieldsJson();
     if (!root) {
         ESP_LOGE(TAG, "OOM creating config JSON");
@@ -408,7 +416,6 @@ void ConfigStore::saveToFs() {
         return;
     }
 
-    dirty_.store(false);
     ESP_LOGI(TAG, "Config saved to %s", full.c_str());
 }
 
@@ -419,7 +426,12 @@ void ConfigStore::saveToFs() {
 esp_err_t ConfigStore::reset() {
     ESP_LOGW(TAG, "Factory reset: restoring defaults and clearing config");
 
-    initAppDataDefault(ctx_->adata);
+    {
+        // Гонка с задачами WIFI/SYSTEM, пишущими adata: сброс дефолтов —
+        // только под общим локом (рекурсивный, вложенность безопасна).
+        AppDataLock dataLock(ctx_);
+        initAppDataDefault(ctx_->adata);
+    }
 
     // Удаляем файл конфига (+tmp), чтобы при старте применились дефолты.
     unlink((basePath_ + kConfigPath).c_str());
