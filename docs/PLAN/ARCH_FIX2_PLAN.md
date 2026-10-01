@@ -43,7 +43,7 @@ wsl -d Ubuntu-22.04 -- bash -lc "cd /mnt/e/Projects/Embedded/ESP32/J1939_scaner/
 |---|-----|--------|
 | 0 | Коммит ревью + плана (документы) | ☑ |
 | 1 | Протокол: `len` батча -> uint16 | ☑ |
-| 2 | Rollback OTA: mark после health-check | ☐ |
+| 2 | Rollback OTA: mark после health-check | ☑ |
 | 3 | OTA: дедлайн приёма + staging storage | ☐ |
 | 4 | EventManager: mutex пула + счётчики дропов | ☐ |
 | 5 | EventManager: compile-time типизация pub/sub | ☐ |
@@ -131,7 +131,7 @@ untracked) и этот план.
 
 ---
 
-## Шаг 2. Rollback OTA: mark после health-check
+## Шаг 2. Rollback OTA: mark после health-check ✔
 
 **Цель.** Закрыть ревью 2.2: `esp_ota_mark_app_valid_cancel_rollback()`
 вызывается первой строкой `app_main` (`main/main.cpp:16`) — образ, который

@@ -11,10 +11,6 @@
 #include "freertos/task.h"
 
 extern "C" void app_main() {
-    // После успешной загрузки помечаем прошивку валидной: если новое приложение
-    // упадёт/не запустится, bootloader (при включённом APP_ROLLBACK) откатится на прошлое.
-    esp_ota_mark_app_valid_cancel_rollback();
-
     AppContext ctx;
     ESP_ERROR_CHECK(ctx.initEventLoop());
 
@@ -40,6 +36,17 @@ extern "C" void app_main() {
     esp_err_t overall = boot.startAll(&ctx);
     if (overall != ESP_OK) {
         ESP_LOGW("MAIN", "Some modules failed — degraded mode");
+    }
+
+    // Подтверждаем OTA-образ только после успешного старта критичных
+    // модулей + короткого health-check: если система падает в первые
+    // секунды, mark не выполнится и bootloader откатит прошлое.
+    if (boot.isReady("config")) {
+        vTaskDelay(pdMS_TO_TICKS(5000));   // health-check: живём 5 с
+        esp_ota_mark_app_valid_cancel_rollback();
+        ESP_LOGI("MAIN", "OTA image validated");
+    } else {
+        ESP_LOGE("MAIN", "critical module failed — OTA image NOT validated, rollback on next boot");
     }
 
     for (;;) { vTaskDelay(pdMS_TO_TICKS(1000)); }
