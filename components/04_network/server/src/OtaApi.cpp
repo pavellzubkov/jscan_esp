@@ -53,10 +53,21 @@ static esp_err_t ota_app_post_handler(httpd_req_t* req) {
     return ota->handleAppUpload(req);
 }
 
-void OtaApi::reg(httpd_handle_t server, OtaService* ota) {
+// Единая регистрация одного URI с логом ошибки (порядок регистрации важен:
+// конкретные URI — до wildcard /* статики, см. ServerModule::begin).
+static esp_err_t reg_one(httpd_handle_t server, const httpd_uri_t& uri) {
+    esp_err_t ret = httpd_register_uri_handler(server, &uri);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to register %s: %s", uri.uri,
+                 esp_err_to_name(ret));
+    }
+    return ret;
+}
+
+esp_err_t OtaApi::reg(httpd_handle_t server, OtaService* ota) {
     if (!server || !ota) {
         ESP_LOGE(TAG, "invalid args (server=%p ota=%p)", (void*)server, (void*)ota);
-        return;
+        return ESP_ERR_INVALID_ARG;
     }
 
     httpd_uri_t ota_status_uri = {
@@ -68,7 +79,8 @@ void OtaApi::reg(httpd_handle_t server, OtaService* ota) {
         .handle_ws_control_frames = false,
         .supported_subprotocol = nullptr,
     };
-    httpd_register_uri_handler(server, &ota_status_uri);
+    esp_err_t ret = reg_one(server, ota_status_uri);
+    if (ret != ESP_OK) return ret;
 
     httpd_uri_t ota_storage_uri = {
         .uri = "/api/ota/storage",
@@ -79,7 +91,8 @@ void OtaApi::reg(httpd_handle_t server, OtaService* ota) {
         .handle_ws_control_frames = false,
         .supported_subprotocol = nullptr,
     };
-    httpd_register_uri_handler(server, &ota_storage_uri);
+    ret = reg_one(server, ota_storage_uri);
+    if (ret != ESP_OK) return ret;
 
     httpd_uri_t ota_app_uri = {
         .uri = "/api/ota/app",
@@ -90,7 +103,9 @@ void OtaApi::reg(httpd_handle_t server, OtaService* ota) {
         .handle_ws_control_frames = false,
         .supported_subprotocol = nullptr,
     };
-    httpd_register_uri_handler(server, &ota_app_uri);
+    ret = reg_one(server, ota_app_uri);
+    if (ret != ESP_OK) return ret;
 
     ESP_LOGI(TAG, "OTA endpoints registered");
+    return ESP_OK;
 }

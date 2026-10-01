@@ -5,6 +5,11 @@
 // строковые коды статусов (единая точка правды).
 namespace http {
 
+// Базовый путь раздачи статики (партиция storage, LittleFS) — единая точка
+// правды: его монтирует LittleFsService в ServerModule и его же копирует
+// static_ctx_t при регистрации wildcard-хендлера.
+inline constexpr const char *kStaticMountPath = "/littlefs";
+
 namespace status {
 inline constexpr const char *kOk                  = "200 OK";
 inline constexpr const char *kAccepted            = "202 Accepted";

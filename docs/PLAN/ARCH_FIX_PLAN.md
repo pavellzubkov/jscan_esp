@@ -585,7 +585,7 @@ kFlagSnapshot, ..., -1)` (лог `n=` оставлен до вызова). NACK 
 
 ---
 
-## Шаг 10. Server/StaticHandler: утечка static_ctx + ошибки регистрации
+## Шаг 10. Server/StaticHandler: утечка static_ctx + ошибки регистрации ✔
 
 **Цель.** Не терять контекст статики при рестарте httpd и не сообщать
 `ESP_OK` при нерабочем WS.
@@ -642,6 +642,22 @@ kFlagSnapshot, ..., -1)` (лог `n=` оставлен до вызова). NACK 
   (guard есть) — утечка возникала только при stop→begin; учесть.
 
 **Проверка.** `idf.py build`.
+
+**Выполнено.** Выбран вариант с out-параметром: `struct static_ctx_t`
+перенесён в `StaticHandler.hpp` (с `kScratchSize`), подпись
+`reg_static_handler(server, static_ctx_t** out_ctx)` (аллокация внутри,
+при ошибке — `delete` там же, `*out_ctx=nullptr`). Владение —
+`ServerModule::staticCtx_` (fwd-decl в `ServerModule.hpp`), освобождение в
+`stop()` **после** `httpd_stop`. `begin()`: ошибки `OtaApi::reg` /
+`ws_->reg` / `reg_static_handler` → лог + откат через `stop()` + возврат
+ошибки (netctrl некритичен → degraded mode по BootManager). `OtaApi::reg`
+переведён на `esp_err_t` с хелпером `reg_one()` (лог первой ошибки URI);
+порядок wildcard-регистрации сохранён (static — последним).
+`"/littlefs"` → `http::kStaticMountPath` (`HttpCommon.hpp`) в обоих местах.
+Дополнительно (необходимость нового error-path): деструктор
+`~WsHandler()` → `ctx_->events.unsubscribe(this)` — без него `delete ws_`
+в `stop()` при ошибке `reg()` оставлял бы висячую подписку
+`WS_MESSAGE_SEND` (UAF при следующем post).
 
 **СТОП.** Шаг завершён: сборка прошла. Следующий шаг — только по новой
 команде.
@@ -826,6 +842,6 @@ kFlagSnapshot, ..., -1)` (лог `n=` оставлен до вызова). NACK 
 | 7 | N рестартов AP на пачку; невалидный IP | WifiApModule, FieldRegistry.cpp | ☑ |
 | 8 | PUSH-спам телеметрии; лок при post; маг. состояния | J1939System.cpp | ☑ |
 | 9 | Дубль sendFrame; хрупкий NACK `st-1` | CommModule.cpp | ☑ |
-| 10 | Утечка static_ctx_t; молчаливые ошибки регистрации | ServerModule, StaticHandler, OtaApi | ☐ |
+| 10 | Утечка static_ctx_t; молчаливые ошибки регистрации | ServerModule, StaticHandler, OtaApi | ☑ |
 | 11 | OOB DNS-парсер; TP packets=0 | simple_dns_server.cpp, J1939TransportProtocol.cpp | ☐ |
 | 12 | Хардкод-дубли; maxTrackedPgns; subscribe() | HardwareConfig, TwaiFields, J1939System, WsHandler, AGENTS.md | ☐ |

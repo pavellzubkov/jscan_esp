@@ -13,6 +13,12 @@ WsHandler::WsHandler(AppContext* ctx)
     memset(connected_clients_, 0, sizeof(connected_clients_));
 }
 
+WsHandler::~WsHandler() {
+    // Подписка делается в reg(); delete без снятия (stop() при ошибке
+    // ServerModule::begin) оставил бы обработчик на удалённый объект → UAF.
+    ctx_->events.unsubscribe(this);
+}
+
 void WsHandler::add_client(int sockfd) {
   bool already_connected = false;
   int old_index = -1;

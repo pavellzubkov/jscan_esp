@@ -5,6 +5,7 @@
 class WsHandler {
 public:
     explicit WsHandler(AppContext* ctx);
+    ~WsHandler();   // снять подписку WS_MESSAGE_SEND (сделана в reg)
 
     esp_err_t reg(httpd_handle_t server);
     void unreg();

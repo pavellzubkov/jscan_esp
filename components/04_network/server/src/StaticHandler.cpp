@@ -12,19 +12,9 @@ static const char* TAG = "StaticHandler";
 
 #define FILE_PATH_MAX (ESP_VFS_PATH_MAX + 128)
 
-// Буфер для потоковой передачи файла — в heap (не на стеке httpd-задачи).
-// ~4 КБ на чанк вместо загрузки всего файла в RAM.
-static constexpr size_t kScratchBufSize = 4096;
-
 #define CHECK_FILE_EXTENSION(filename, ext) \
     (strlen(filename) >= strlen(ext) &&      \
      strcasecmp(&filename[strlen(filename) - strlen(ext)], ext) == 0)
-
-// Контекст хендлера: базовый путь ФС + scratch-буфер для чтения.
-struct static_ctx_t {
-    char base_path[ESP_VFS_PATH_MAX + 1];
-    char scratch[kScratchBufSize];
-};
 
 // Проверка безопасности URI: запрет обхода директорий (..) и //.
 static esp_err_t is_uri_safe(httpd_req_t* req) {
@@ -220,7 +210,7 @@ static esp_err_t static_get_handler(httpd_req_t* req) {
     // Потоковая передача чанками.
     esp_err_t ret = ESP_OK;
     ssize_t n;
-    while ((n = read(fd, ctx->scratch, kScratchBufSize)) > 0) {
+    while ((n = read(fd, ctx->scratch, static_ctx_t::kScratchSize)) > 0) {
         if (httpd_resp_send_chunk(req, ctx->scratch,
                                   static_cast<size_t>(n)) != ESP_OK) {
             ESP_LOGE(TAG, "Failed to send chunk for %s", filepath);
@@ -244,9 +234,13 @@ static esp_err_t static_get_handler(httpd_req_t* req) {
     return ESP_OK;
 }
 
-esp_err_t reg_static_handler(httpd_handle_t server) {
+esp_err_t reg_static_handler(httpd_handle_t server, static_ctx_t** out_ctx) {
+    if (!out_ctx) return ESP_ERR_INVALID_ARG;
+    *out_ctx = nullptr;
+    if (!server) return ESP_ERR_INVALID_ARG;
+
     auto* ctx = new static_ctx_t();
-    strlcpy(ctx->base_path, "/littlefs", sizeof ctx->base_path);
+    strlcpy(ctx->base_path, http::kStaticMountPath, sizeof ctx->base_path);
 
     httpd_uri_t uri = {};
     uri.uri = "/*";
@@ -264,5 +258,6 @@ esp_err_t reg_static_handler(httpd_handle_t server) {
         return ret;
     }
     ESP_LOGI(TAG, "Static handler registered (base: %s)", ctx->base_path);
+    *out_ctx = ctx;   // владение переходит к вызывающему (ServerModule)
     return ESP_OK;
 }

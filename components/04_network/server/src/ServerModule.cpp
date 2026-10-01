@@ -2,13 +2,14 @@
 #include "StaticHandler.hpp"
 #include "WsHandler.hpp"
 #include "OtaApi.hpp"
+#include "HttpCommon.hpp"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 
 static const char* TAG = "ServerModule";
 
 ServerModule::ServerModule(AppContext* ctx)
-    : ctx_(ctx), fs_("/littlefs", "storage", false) {}
+    : ctx_(ctx), fs_(http::kStaticMountPath, "storage", false) {}
 
 ServerModule::~ServerModule() {
     stop();
@@ -55,16 +56,32 @@ esp_err_t ServerModule::begin() {
     // httpd_register_uri_handler будет считать /api/ota/* и /ws уже занятыми
     // (ESP_ERR_HTTPD_HANDLER_EXISTS), а поиск хендлера пойдёт по порядку
     // регистрации. Поэтому сначала конкретные URI, wildcard — последним.
-    OtaApi::reg(server_, &ota_);
-
-    ws_ = new WsHandler(ctx_);
-    esp_err_t ws_ret = ws_->reg(server_);
-    if (ws_ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to register WS handler: %s",
-                 esp_err_to_name(ws_ret));
+    // Ошибка любой регистрации — откат через stop() и возврат ошибки:
+    // молчаливый ESP_OK оставил бы систему с нерабочим /ws или статикой.
+    ret = OtaApi::reg(server_, &ota_);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to register OTA endpoints: %s",
+                 esp_err_to_name(ret));
+        stop();
+        return ret;
     }
 
-    reg_static_handler(server_);
+    ws_ = new WsHandler(ctx_);
+    ret = ws_->reg(server_);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to register WS handler: %s",
+                 esp_err_to_name(ret));
+        stop();
+        return ret;
+    }
+
+    ret = reg_static_handler(server_, &staticCtx_);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to register static handler: %s",
+                 esp_err_to_name(ret));
+        stop();
+        return ret;
+    }
 
     ESP_LOGI(TAG, "ServerModule ready");
     return ESP_OK;
@@ -72,8 +89,8 @@ esp_err_t ServerModule::begin() {
 
 void ServerModule::stop() {
     // Сначала полностью останавливаем httpd (завершает все задачи/сокеты),
-    // затем удаляем WsHandler. Иначе httpd-задачи могут вызывать ws-хендлер
-    // после delete ws_ (UAF).
+    // затем удаляем контексты хендлеров. Иначе httpd-задачи могут вызывать
+    // хендлеры с освобождённым user_ctx (UAF).
     if (server_) {
         httpd_stop(server_);
         server_ = nullptr;
@@ -84,4 +101,8 @@ void ServerModule::stop() {
         delete ws_;
         ws_ = nullptr;
     }
+    // Контекст статики (~4 КБ со scratch) — строго после httpd_stop:
+    // wildcard-хендлер /* больше не вызывается.
+    delete staticCtx_;
+    staticCtx_ = nullptr;
 }
