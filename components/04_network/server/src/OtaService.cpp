@@ -5,6 +5,7 @@
 #include "esp_partition.h"
 #include "esp_system.h"
 #include "esp_task_wdt.h"
+#include "esp_timer.h"
 #include "cJSON.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -84,12 +85,15 @@ void OtaService::exitOta() {
 
 // ---------------------------------------------------------------
 // Потоковый приём тела запроса: читает ровно expected байт и кормит
-// ими callback. Таймаут между сегментами TCP не считается ошибкой —
-// при медленном клиенте просто ждём дальше (recv_wait_timeout = 1 c).
+// ими callback. Есть ОБЩИЙ дедлайн timeoutMs на весь приём: таймаут
+// между сегментами TCP сам по себе не ошибка (медленный клиент),
+// но если суммарно приём не уложился в дедлайн — ESP_ERR_TIMEOUT
+// (залипший клиент не держит задачу httpd вечно).
 // ---------------------------------------------------------------
 esp_err_t OtaService::recvToCallback(httpd_req_t* req, size_t expected,
                                      bool (*cb)(void* arg, const uint8_t* data, size_t len),
-                                     void* cb_arg, std::atomic<size_t>* received) {
+                                     void* cb_arg, std::atomic<size_t>* received,
+                                     uint32_t timeoutMs) {
     // Буфер на куче, а не на стеке: задача httpd имеет стек 16384 байт, но
     // kBufSize=8192 + остальные фреймы — лучше не рисковать стеком.
     // unique_ptr с deleter free: четыре ручных free на error-path'ах заменены
@@ -101,12 +105,20 @@ esp_err_t OtaService::recvToCallback(httpd_req_t* req, size_t expected,
         return ESP_ERR_NO_MEM;
     }
     size_t remaining = expected;
+    const int64_t startUs = esp_timer_get_time();
+    const int64_t deadlineUs = static_cast<int64_t>(timeoutMs) * 1000;
 
     while (remaining > 0) {
         int len = httpd_req_recv(req, buf.get(), remaining < kBufSize ? remaining : kBufSize);
         if (len < 0) {
             if (len == HTTPD_SOCK_ERR_TIMEOUT) {
-                continue; // медленный клиент — ждём следующий фрагмент
+                // медленный клиент — ждём следующий фрагмент, но не дольше
+                // общего дедлайна приёма.
+                if (esp_timer_get_time() - startUs > deadlineUs) {
+                    ESP_LOGE(TAG, "recv deadline exceeded (%u ms)", (unsigned)timeoutMs);
+                    return ESP_ERR_TIMEOUT;
+                }
+                continue;
             }
             ESP_LOGE(TAG, "recv error: %d", len);
             return ESP_FAIL;
@@ -121,6 +133,10 @@ esp_err_t OtaService::recvToCallback(httpd_req_t* req, size_t expected,
         }
         *received += (size_t)len;
         remaining -= (size_t)len;
+        if (remaining > 0 && esp_timer_get_time() - startUs > deadlineUs) {
+            ESP_LOGE(TAG, "recv deadline exceeded (%u ms)", (unsigned)timeoutMs);
+            return ESP_ERR_TIMEOUT;
+        }
     }
     return ESP_OK;
 }
@@ -159,7 +175,9 @@ esp_err_t OtaService::handleStorageUpload(httpd_req_t* req) {
     }
 
     size_t partSize = part->size;
-    if (req->content_len != (int)partSize) {
+    // Образ может быть меньше раздела (остаток останется 0xFF после erase) —
+    // строгое равенство отклоняло бы валидные уменьшенные образы.
+    if (req->content_len <= 0 || (size_t)req->content_len > partSize) {
         {
             std::lock_guard<std::mutex> lock(mux_);
             state_ = State::ERROR;
@@ -167,13 +185,58 @@ esp_err_t OtaService::handleStorageUpload(httpd_req_t* req) {
         }
         char buf[96];
         snprintf(buf, sizeof(buf),
-                 R"({"error":"expected %u bytes, got %d"})", partSize, req->content_len);
+                 R"({"error":"size must be 1..%u bytes, got %d"})", partSize, req->content_len);
         http::setStatus(req, http::status::kBadRequest);
         return httpd_resp_sendstr(req, buf);
     }
 
-    // Task WDT расширяется, т.к. erase/write блокируют выполнение задач,
-    // кормящих watchdog. OTA_END публикуется на любом пути выхода из функции.
+    const size_t contentLen = (size_t)req->content_len;
+
+    // Staging в RAM (PSRAM, SPIRAM_USE_MALLOC): принимаем тело ДО каких-либо
+    // flash-операций. Ошибка приёма -> раздел вообще не размонтируется и не
+    // стирается: прерванная загрузка больше не убивает фронтенд.
+    std::unique_ptr<uint8_t, decltype(&std::free)> staging(
+        static_cast<uint8_t*>(std::malloc(contentLen)), &std::free);
+    if (!staging) {
+        {
+            std::lock_guard<std::mutex> lock(mux_);
+            state_ = State::ERROR;
+            error_ = "staging buffer OOM";
+        }
+        ESP_LOGE(TAG, "OOM: cannot allocate staging buffer (%u bytes)", (unsigned)contentLen);
+        http::setStatus(req, http::status::kInternalServerError);
+        return httpd_resp_sendstr(req, R"({"error":"out of memory"})");
+    }
+
+    struct CopyCtx {
+        uint8_t* dst;
+        size_t off;
+    } cctx = { staging.get(), 0 };
+
+    auto copyCb = [](void* arg, const uint8_t* data, size_t len) -> bool {
+        auto* c = static_cast<CopyCtx*>(arg);
+        std::memcpy(c->dst + c->off, data, len);
+        c->off += len;
+        return true;
+    };
+
+    esp_err_t recvErr = recvToCallback(req, contentLen, copyCb, &cctx,
+                                       &received_, kUploadTimeoutMs);
+    if (recvErr != ESP_OK) {
+        // FS не тронута — единственный флаг ошибки.
+        {
+            std::lock_guard<std::mutex> lock(mux_);
+            state_ = State::ERROR;
+            error_ = (recvErr == ESP_ERR_TIMEOUT) ? "receive timeout" : "upload interrupted";
+        }
+        ESP_LOGE(TAG, "storage upload failed before flash ops (%s) — partition untouched",
+                 esp_err_to_name(recvErr));
+        http::setStatus(req, http::status::kInternalServerError);
+        return httpd_resp_sendstr(req, R"({"error":"upload interrupted"})");
+    }
+
+    // Дальше — flash-операции: WdtPause/enterOta только на этой фазе
+    // (приём в RAM кэш не блокировал, расширять WDT не требовалось).
     WdtPause wdtPause;
     enterOta();
     struct OtaEndGuard {
@@ -194,33 +257,57 @@ esp_err_t OtaService::handleStorageUpload(httpd_req_t* req) {
         return httpd_resp_sendstr(req, R"({"error":"unmount failed"})");
     }
 
-    err = esp_partition_erase_range(part, 0, partSize);
-    if (err != ESP_OK) {
+    // Отсюда и до mount() любое вхождение обязано вернуть монтирование
+    // (ниже по error-path'ам), иначе статика недоступна до перезагрузки.
+    auto failFlash = [&](const char* msg) {
         {
             std::lock_guard<std::mutex> lock(mux_);
             state_ = State::ERROR;
-            error_ = "erase failed";
+            error_ = msg;
         }
-        ESP_LOGE(TAG, "failed to erase storage partition: %s", esp_err_to_name(err));
+        esp_err_t merr = fs_->mount(false);
+        if (merr != ESP_OK) {
+            ESP_LOGE(TAG, "remount after flash failure also failed: %s", esp_err_to_name(merr));
+        }
         http::setStatus(req, http::status::kInternalServerError);
-        return httpd_resp_sendstr(req, R"({"error":"erase failed"})");
-    }
-
-    struct WriteCtx {
-        const esp_partition_t* part;
-        size_t off;
-    } wctx = { part, 0 };
-
-    auto writeCb = [](void* arg, const uint8_t* data, size_t len) -> bool {
-        auto* c = static_cast<WriteCtx*>(arg);
-        if (esp_partition_write(c->part, c->off, data, len) != ESP_OK) {
-            return false;
-        }
-        c->off += len;
-        return true;
+        char resp[96];
+        snprintf(resp, sizeof(resp), R"({"error":"%s"})", msg);
+        return httpd_resp_sendstr(req, resp);
     };
 
-    bool uploadOk = (recvToCallback(req, partSize, writeCb, &wctx, &received_) == ESP_OK);
+    err = esp_partition_erase_range(part, 0, partSize);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "failed to erase storage partition: %s", esp_err_to_name(err));
+        return failFlash("erase failed");
+    }
+
+    // Запись целиком из staging-буфера (partition API сам режет на чанки).
+    err = esp_partition_write(part, 0, staging.get(), contentLen);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "failed to write storage image: %s", esp_err_to_name(err));
+        return failFlash("write failed");
+    }
+
+    // Read-back verify: littlefs-образ своего CRC не несёт — честная
+    // проверка «что записалось, то и читается» через memcmp с буфером.
+    {
+        std::unique_ptr<uint8_t, decltype(&std::free)> vbuf(
+            static_cast<uint8_t*>(std::malloc(kBufSize)), &std::free);
+        bool ok = (vbuf != nullptr);
+        for (size_t off = 0; ok && off < contentLen; ) {
+            size_t n = (contentLen - off) < kBufSize ? (contentLen - off) : kBufSize;
+            if (esp_partition_read(part, off, vbuf.get(), n) != ESP_OK ||
+                std::memcmp(vbuf.get(), staging.get() + off, n) != 0) {
+                ok = false;
+                break;
+            }
+            off += n;
+        }
+        if (!ok) {
+            ESP_LOGE(TAG, "storage read-back verify failed");
+            return failFlash("verify failed");
+        }
+    }
 
     // Монтируем БЕЗ автоформата: после записи образа нельзя молча стирать раздел
     // и рапортовать успех. Если образ/запись повреждены — вернём ошибку,
@@ -230,21 +317,11 @@ esp_err_t OtaService::handleStorageUpload(httpd_req_t* req) {
         {
             std::lock_guard<std::mutex> lock(mux_);
             state_ = State::ERROR;
-            error_ = uploadOk ? "storage image invalid" : "fs remount failed";
+            error_ = "storage image invalid";
         }
         ESP_LOGE(TAG, "failed to remount LittleFS after write: %s", esp_err_to_name(err));
         http::setStatus(req, http::status::kInternalServerError);
         return httpd_resp_sendstr(req, R"({"error":"fs remount failed"})");
-    }
-
-    if (!uploadOk) {
-        {
-            std::lock_guard<std::mutex> lock(mux_);
-            state_ = State::ERROR;
-            error_ = "upload interrupted";
-        }
-        http::setStatus(req, http::status::kInternalServerError);
-        return httpd_resp_sendstr(req, R"({"error":"upload interrupted"})");
     }
 
     {
@@ -252,7 +329,7 @@ esp_err_t OtaService::handleStorageUpload(httpd_req_t* req) {
         state_ = State::STORAGE_DONE;
         error_.clear();
     }
-    ESP_LOGI(TAG, "storage.bin written and remounted (%u bytes)", (unsigned)partSize);
+    ESP_LOGI(TAG, "storage.bin written, verified and remounted (%u bytes)", (unsigned)contentLen);
     return httpd_resp_sendstr(req, R"({"status":"storage_done"})");
 }
 
@@ -320,7 +397,7 @@ esp_err_t OtaService::handleAppUpload(httpd_req_t* req) {
     };
 
     bool uploadOk = (recvToCallback(req, (size_t)req->content_len, writeCb,
-                                    &wctx, &received_) == ESP_OK);
+                                    &wctx, &received_, kUploadTimeoutMs) == ESP_OK);
 
     if (!uploadOk) {
         esp_ota_abort(handle);

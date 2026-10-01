@@ -44,7 +44,7 @@ wsl -d Ubuntu-22.04 -- bash -lc "cd /mnt/e/Projects/Embedded/ESP32/J1939_scaner/
 | 0 | Коммит ревью + плана (документы) | ☑ |
 | 1 | Протокол: `len` батча -> uint16 | ☑ |
 | 2 | Rollback OTA: mark после health-check | ☑ |
-| 3 | OTA: дедлайн приёма + staging storage | ☐ |
+| 3 | OTA: дедлайн приёма + staging storage | ☑ |
 | 4 | EventManager: mutex пула + счётчики дропов | ☐ |
 | 5 | EventManager: compile-time типизация pub/sub | ☐ |
 | 6 | TWAI: счётчики потерь + дренаж + неблок. TX | ☐ |
@@ -190,7 +190,7 @@ untracked) и этот план.
 
 ---
 
-## Шаг 3. OTA: дедлайн приёма + staging storage
+## Шаг 3. OTA: дедлайн приёма + staging storage ✔
 
 **Цель.** Закрыть ревью 2.3 (OtaService.cpp): (а) `HTTPD_SOCK_ERR_TIMEOUT ->
 continue` без общего дедлайна залипшего клиента; (б) `esp_partition_erase_range`
