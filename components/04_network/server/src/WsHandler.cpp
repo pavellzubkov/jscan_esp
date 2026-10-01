@@ -42,7 +42,7 @@ void WsHandler::add_client(int sockfd) {
     client_count_--;
   }
 
-  if (client_count_ >= 10) {
+  if (client_count_ >= kMaxClients) {
     int rejected = sockfd;
     taskEXIT_CRITICAL(&ws_mux);
     // Логирование — ВНЕ критической секции!
@@ -291,7 +291,7 @@ void WsHandler::send_to_all_clients(const char *data, size_t len) {
 
   // 1. Делаем локальную копию списка сокетов — БЕЗ критической секции во время
   // отправки
-  int local_clients[10];
+  int local_clients[kMaxClients];
   int local_count = 0;
 
   taskENTER_CRITICAL(&ws_mux);
@@ -332,8 +332,11 @@ esp_err_t WsHandler::reg(httpd_handle_t server) {
   // жизни объекта: при рестарте httpd (NetworkController) reg() вызывается
   // повторно, а дубли подписок исчерпали бы пул EventManager.
   if (!subs_registered_) {
-    ctx_->events.subscribe(APP_EVENTS_BASE, app_event_id_t::WS_MESSAGE_SEND,
-                           &WsHandler::onWsMessageSend, this);
+    if (!ctx_->events.subscribe(APP_EVENTS_BASE, app_event_id_t::WS_MESSAGE_SEND,
+                                &WsHandler::onWsMessageSend, this)) {
+      ESP_LOGE(TAG, "subscribe(WS_MESSAGE_SEND) failed");
+      return ESP_FAIL;
+    }
     subs_registered_ = true;
   }
 

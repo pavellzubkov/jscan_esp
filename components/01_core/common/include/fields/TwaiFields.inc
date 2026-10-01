@@ -1,19 +1,19 @@
 // @label Адрес узла
 // @description Адрес узла в J1939-сети (src при отправке RQST)
 // @group TWAI
-DATA_FIELD(uint8_t,     canNodeAddr,      25, 0, 253, CFG_UINT, true, false)
+DATA_FIELD(uint8_t,     canNodeAddr,      Hw::kDefaultNodeAddr, 0, 253, CFG_UINT, true, false)
 
 // @label Битрейт CAN
 // @description Битрейт шины (125000/250000/500000/1000000); применяется при перезагрузке
 // @group TWAI
 // @unit bps
-DATA_FIELD(uint32_t,    canBitrate,       250000, 125000, 1000000, CFG_UINT, true, false)
+DATA_FIELD(uint32_t,    canBitrate,       Hw::kCanBitrate, 125000, 1000000, CFG_UINT, true, false)
 
 // @label Таймаут TX
 // @description Таймаут передачи кадра CAN
 // @group TWAI
 // @unit мс
-DATA_FIELD(uint16_t,    canTxTimeoutMs,   100, 10, 500, CFG_UINT, true, false)
+DATA_FIELD(uint16_t,    canTxTimeoutMs,   Hw::kDefaultTxTimeoutMs, 10, 500, CFG_UINT, true, false)
 
 // @label Автовосстановление
 // @description Автоматический recover драйвера при BUS_OFF

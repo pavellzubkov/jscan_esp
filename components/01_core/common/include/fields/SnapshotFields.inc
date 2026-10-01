@@ -2,13 +2,13 @@
 // @description Период публикации батч-фрейма J1939
 // @group Snapshot
 // @unit мс
-DATA_FIELD(uint32_t,    snapshotIntervalMs, 250, 100, 1000, CFG_UINT, true, false)
+DATA_FIELD(uint32_t,    snapshotIntervalMs, Timing::kSnapshotIntervalMs, 100, 1000, CFG_UINT, true, false)
 
 // @label TTL снапшота
 // @description Время «активности» PGN в аккумуляторе
 // @group Snapshot
 // @unit мс
-DATA_FIELD(uint32_t,    snapshotTtlMs,      2000, 500, 10000, CFG_UINT, true, false)
+DATA_FIELD(uint32_t,    snapshotTtlMs,      Timing::kSnapshotTtlMs, 500, 10000, CFG_UINT, true, false)
 
 // @label Макс. PGN
 // @description Потолок карты аккумулятора (буфер фиксирован 128)

@@ -9,6 +9,7 @@
 class CommunicationModule {
 public:
     explicit CommunicationModule(AppContext* ctx);
+    ~CommunicationModule();   // снять подписки (нужно и при откате begin())
 
     esp_err_t begin();
 

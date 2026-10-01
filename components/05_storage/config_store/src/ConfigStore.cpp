@@ -163,6 +163,11 @@ ConfigStore::ConfigStore(AppContext* ctx, const char* basePath,
       fs_(basePath_.c_str(), partitionLabel_.c_str(), true) {}
 
 ConfigStore::~ConfigStore() {
+    // Отписка обязана быть и здесь: makeModule удаляет объект при ошибке
+    // begin() — иначе обработчики CONFIG_CHANGED/FACTORY_RESET остались бы
+    // на удалённый объект (UAF при первом же событии).
+    if (ctx_)
+        ctx_->events.unsubscribe(this);
     if (task_) {
         vTaskDelete(task_);
         task_ = nullptr;
@@ -204,10 +209,15 @@ esp_err_t ConfigStore::begin() {
 
     // dirty_ ставится подписчиком CONFIG_CHANGED: автосейв сохранит JSON при
     // следующем тике. Также ловим FACTORY_RESET → сброс + рестарт.
-    ctx_->events.subscribe(APP_EVENTS_BASE, app_event_id_t::CONFIG_CHANGED,
-                           &ConfigStore::onConfigChanged, this);
-    ctx_->events.subscribe(APP_EVENTS_BASE, app_event_id_t::FACTORY_RESET,
-                           &ConfigStore::reset, this);
+    // Отказ подписки = отказ модуля (critical): dtor снимет частичные подписки
+    // и удалит автосейв-задачу.
+    if (!ctx_->events.subscribe(APP_EVENTS_BASE, app_event_id_t::CONFIG_CHANGED,
+                                &ConfigStore::onConfigChanged, this) ||
+        !ctx_->events.subscribe(APP_EVENTS_BASE, app_event_id_t::FACTORY_RESET,
+                                &ConfigStore::reset, this)) {
+        ESP_LOGE(TAG, "event subscribe failed");
+        return ESP_FAIL;
+    }
 
     ESP_LOGI(TAG, "ConfigStore started (littlefs: %s)",
              partitionLabel_.c_str());

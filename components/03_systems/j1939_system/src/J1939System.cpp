@@ -44,6 +44,17 @@ uint8_t clampErrCnt(uint32_t v)
 {
     return v > 255 ? 255 : static_cast<uint8_t>(v);
 }
+
+// Дефолты TwaiDriver::Config (слой 02 намеренно не знает HardwareConfig)
+// обязаны совпадать с константами Hw — сверяем на этапе компиляции, чтобы
+// дефолт драйвера и конфиг ниже не разъезжались.
+constexpr TwaiDriver::Config kTwaiDefaults{};
+static_assert(kTwaiDefaults.tx == Hw::kCanTxGpio,
+              "TwaiDriver::Config::tx default != Hw::kCanTxGpio");
+static_assert(kTwaiDefaults.rx == Hw::kCanRxGpio,
+              "TwaiDriver::Config::rx default != Hw::kCanRxGpio");
+static_assert(kTwaiDefaults.bitrate == Hw::kCanBitrate,
+              "TwaiDriver::Config::bitrate default != Hw::kCanBitrate");
 }
 
 J1939System::J1939System(AppContext* ctx)
@@ -94,14 +105,23 @@ esp_err_t J1939System::begin()
         return err;
     }
 
-    ctx_->events.subscribe(APP_EVENTS_BASE, app_event_id_t::J1939_REQUEST,
-                           &J1939System::onJ1939Request, this);
-    ctx_->events.subscribe(APP_EVENTS_BASE, app_event_id_t::CONFIG_CHANGED,
-                           &J1939System::onConfigChanged, this);
-    ctx_->events.subscribe(APP_EVENTS_BASE, app_event_id_t::WS_CLIENT_CONNECTED,
-                           &J1939System::onWsClientConnected, this);
-    ctx_->events.subscribe(APP_EVENTS_BASE, app_event_id_t::WS_CLIENT_DISCONNECTED,
-                           &J1939System::onWsClientDisconnected, this);
+    // Подписки: отказ (пул EventManager исчерпан) = отказ модуля. makeModule
+    // удалит объект при ошибке begin(), dtor снимет уже зарегистрированные
+    // подписки и остановит TWAI — откат делать отдельно не нужно.
+    const bool subsOk =
+        ctx_->events.subscribe(APP_EVENTS_BASE, app_event_id_t::J1939_REQUEST,
+                               &J1939System::onJ1939Request, this) &&
+        ctx_->events.subscribe(APP_EVENTS_BASE, app_event_id_t::CONFIG_CHANGED,
+                               &J1939System::onConfigChanged, this) &&
+        ctx_->events.subscribe(APP_EVENTS_BASE, app_event_id_t::WS_CLIENT_CONNECTED,
+                               &J1939System::onWsClientConnected, this) &&
+        ctx_->events.subscribe(APP_EVENTS_BASE, app_event_id_t::WS_CLIENT_DISCONNECTED,
+                               &J1939System::onWsClientDisconnected, this);
+    if (!subsOk)
+    {
+        ESP_LOGE(TAG, "event subscribe failed, abort start");
+        return ESP_FAIL;
+    }
 
     reqQueue_ = xQueueCreate(8, sizeof(j1939_request_t));
     if (!reqQueue_)
@@ -151,13 +171,13 @@ void J1939System::sendRequest(const j1939_request_t& req)
     buf[1] = static_cast<uint8_t>((req.pgn >> 8) & 0xFF);
     buf[2] = static_cast<uint8_t>((req.pgn >> 16) & 0xFF);
 
-    uint8_t nodeAddr = 25;   // дефолт canNodeAddr (см. TwaiFields.inc)
+    uint8_t nodeAddr = Hw::kDefaultNodeAddr;   // дефолт canNodeAddr (TwaiFields.inc)
     ctx_->fields.getByName("canNodeAddr", nodeAddr);
 
     uint32_t id = (6u << 26) | (Hw::kPgnRequest << 8) | nodeAddr;
     id = (id & 0xFFFF00FFu) | (static_cast<uint32_t>(req.dstAddr) << 8);
 
-    uint16_t txTimeoutMs = 100;
+    uint16_t txTimeoutMs = Hw::kDefaultTxTimeoutMs;
     ctx_->fields.getByName("canTxTimeoutMs", txTimeoutMs);
 
     esp_err_t txErr = twai_.transmit(id, buf, sizeof(buf), pdMS_TO_TICKS(txTimeoutMs));
@@ -186,14 +206,14 @@ void J1939System::onConfigChanged(const field_change_event_t* evt)
     {
     case canNodeAddr_UID:
     {
-        uint8_t v = 25;
+        uint8_t v = Hw::kDefaultNodeAddr;
         ctx_->fields.getByName("canNodeAddr", v);
         ESP_LOGI(TAG, "canNodeAddr=%u applied immediately", v);
         break;
     }
     case canTxTimeoutMs_UID:
     {
-        uint16_t v = 100;
+        uint16_t v = Hw::kDefaultTxTimeoutMs;
         ctx_->fields.getByName("canTxTimeoutMs", v);
         ESP_LOGI(TAG, "canTxTimeoutMs=%u applied immediately", v);
         break;
@@ -358,6 +378,13 @@ void J1939System::sendSnapshot(uint32_t nowMs)
     if (n == 0)
         return;   // нет активных записей — пустой батч не шлём
 
+    // Потолок карты аккумулятора (поле maxTrackedPgns, 16..128): применяется
+    // к уже отсортированному порядку, т.е. «свежие первыми» (PROTOCOL §7).
+    uint16_t maxTracked = SnapshotAccumulator::kMaxRecords;
+    ctx_->fields.getByName("maxTrackedPgns", maxTracked);
+    const size_t emitLimit =
+        (n < static_cast<size_t>(maxTracked)) ? n : static_cast<size_t>(maxTracked);
+
     // Порядок записей в батче — «свежие первыми»: сортируем индексы по
     // lastTsMs (убывание), чтобы при усечении терялись самые старые записи
     // (PROTOCOL §7). n ≤ kMaxRecords, сортировка вставками — без кучи.
@@ -380,7 +407,7 @@ void J1939System::sendSnapshot(uint32_t nowMs)
     J1939Proto::BatchRecord batch[SnapshotAccumulator::kMaxRecords];
     size_t batchCount = 0;
     size_t payloadLen = 0;
-    for (size_t k = 0; k < n; ++k)
+    for (size_t k = 0; k < emitLimit; ++k)
     {
         const SnapshotAccumulator::Record& r = recs[order[k]];
         J1939Proto::BatchRecord b;

@@ -31,20 +31,34 @@ CommunicationModule::CommunicationModule(AppContext* ctx)
 {
 }
 
+CommunicationModule::~CommunicationModule()
+{
+    // Подписки снимаются всегда: makeModule удаляет объект при ошибке begin()
+    // — без отписки висячий обработчик получил бы событие на удалённый объект.
+    if (ctx_)
+        ctx_->events.unsubscribe(this);
+}
+
 esp_err_t CommunicationModule::begin()
 {
-    ctx_->events.subscribe(APP_EVENTS_BASE, app_event_id_t::WS_MESSAGE_RECEIVED,
-                           &CommunicationModule::onIncomingPacket, this);
-    ctx_->events.subscribe(APP_EVENTS_BASE, app_event_id_t::J1939_SNAPSHOT_SEND,
-                           &CommunicationModule::onSnapshot, this);
-    ctx_->events.subscribe(APP_EVENTS_BASE, app_event_id_t::WS_CLIENT_CONNECTED,
-                           &CommunicationModule::onWsClientConnected, this);
-    ctx_->events.subscribe(APP_EVENTS_BASE, app_event_id_t::WS_CLIENT_DISCONNECTED,
-                           &CommunicationModule::onWsClientDisconnected, this);
-    ctx_->events.subscribe(APP_EVENTS_BASE, app_event_id_t::WIFI_STATUS,
-                           &CommunicationModule::onWifiStatus, this);
-    ctx_->events.subscribe(APP_EVENTS_BASE, app_event_id_t::COMMUNICATION_SEND,
-                           &CommunicationModule::onCommunicationSend, this);
+    const bool subsOk =
+        ctx_->events.subscribe(APP_EVENTS_BASE, app_event_id_t::WS_MESSAGE_RECEIVED,
+                               &CommunicationModule::onIncomingPacket, this) &&
+        ctx_->events.subscribe(APP_EVENTS_BASE, app_event_id_t::J1939_SNAPSHOT_SEND,
+                               &CommunicationModule::onSnapshot, this) &&
+        ctx_->events.subscribe(APP_EVENTS_BASE, app_event_id_t::WS_CLIENT_CONNECTED,
+                               &CommunicationModule::onWsClientConnected, this) &&
+        ctx_->events.subscribe(APP_EVENTS_BASE, app_event_id_t::WS_CLIENT_DISCONNECTED,
+                               &CommunicationModule::onWsClientDisconnected, this) &&
+        ctx_->events.subscribe(APP_EVENTS_BASE, app_event_id_t::WIFI_STATUS,
+                               &CommunicationModule::onWifiStatus, this) &&
+        ctx_->events.subscribe(APP_EVENTS_BASE, app_event_id_t::COMMUNICATION_SEND,
+                               &CommunicationModule::onCommunicationSend, this);
+    if (!subsOk)
+    {
+        ESP_LOGE(TAG, "event subscribe failed, abort start");
+        return ESP_FAIL;
+    }
     ESP_LOGI(TAG, "CommunicationModule ready");
     return ESP_OK;
 }

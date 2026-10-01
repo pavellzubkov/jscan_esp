@@ -11,9 +11,13 @@ public:
     void unreg();
 
 private:
+    // Потолок подключений WS: один источник для массива, проверки в
+    // add_client и локальной копии в send_to_all_clients.
+    static constexpr int kMaxClients = 10;
+
     AppContext* ctx_;
     httpd_handle_t server_ = nullptr;
-    int connected_clients_[10];
+    int connected_clients_[kMaxClients];
     int client_count_ = 0;
     // Подписка на WS_MESSAGE_SEND выполняется один раз за время жизни объекта
     // (reg() может вызываться многократно — рестарт httpd в NetworkController).

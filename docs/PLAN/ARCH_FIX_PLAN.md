@@ -664,7 +664,7 @@ kFlagSnapshot, ..., -1)` (лог `n=` оставлен до вызова). NACK 
 
 ---
 
-## Шаг 11. Валидация входящих данных: DNS-парсер и TP-сессии
+## Шаг 11. Валидация входящих данных: DNS-парсер и TP-сессии ✔
 
 **Цель.** Закрыть OOB-read в DNS-ответе и некорректную TP.CM-сессию.
 
@@ -716,12 +716,20 @@ kFlagSnapshot, ..., -1)` (лог `n=` оставлен до вызова). NACK 
 
 **Проверка.** `idf.py build` (host-тестов нет: файлы зависят от IDF).
 
+**Выполнено.** DNS: в ветке `0xC0` добавлена проверка `(end - ptr) < 2`
+до `ptr += 2`; после цикла Type/Class — `ptr > end || (end - ptr) < 4`;
+после цикла вопросов — `if (ptr > end) return 0` до вычисления
+`questions_size`. TP: после проверки `totalLen` валидация
+`packets == 0 || packets != ceil(totalLen/7)` → `return` без создания
+сессии (+ `ESP_LOGD` с фактическими значениями; `expectedPackets` max 255
+при `totalLen ≤ 1785` — в uint8_t не переполняется).
+
 **СТОП.** Шаг завершён: сборка прошла. Следующий шаг — только по новой
 команде.
 
 ---
 
-## Шаг 12. Консолидация хардкодов + мелкие чистки
+## Шаг 12. Консолидация хардкодов + мелкие чистки ✔
 
 **Цель.** Один источник дефолтов/констант; убрать мёртвые/декоративные
 поля; проверка результатов `subscribe()`.
@@ -824,7 +832,38 @@ kFlagSnapshot, ..., -1)` (лог `n=` оставлен до вызова). NACK 
 
 **Проверка.** Host-тесты → `idf.py build`.
 
-**СТОП.** Шаг завершён: `checks=N failures=0` + сборка прошла.
+**Выполнено.**
+1. Дефолты: `Hw::kDefaultNodeAddr=25` и `Hw::kDefaultTxTimeoutMs=100`
+   добавлены в `HardwareConfig.h`; дефолты `TwaiFields.inc`
+   (`canNodeAddr/canBitrate/canTxTimeoutMs`) и фолбэки `J1939System.cpp`
+   (4 места) переведены на них. `SnapshotFields.inc`
+   (`snapshotIntervalMs/snapshotTtlMs`) — на `Timing::kSnapshot*`
+   (`AppData.h` теперь включает `SystemTiming.h`; в `common/CMakeLists.txt`
+   добавлен `esp_timer` в `REQUIRES`). Вместо runtime-дубля пинов/битрейта
+   выбран вариант **static_assert**: `constexpr TwaiDriver::Config
+   kTwaiDefaults{}` в анонимном namespace `J1939System.cpp` сверяет
+   `tx/rx/bitrate` с `Hw::kCanTxGpio/kCanRxGpio/kCanBitrate` (слой 02
+   HardwareConfig по-прежнему не знает).
+2. `WsHandler.hpp`: `static constexpr int kMaxClients = 10` — заменены
+   массив `connected_clients_`, `add_client` и `local_clients`.
+3. `sendSnapshot()`: чтение `maxTrackedPgns` после `collect()`, усечение
+   через `emitLimit` в цикле построения батча (**после** сортировки —
+   «свежие первыми»). Альтернатива «удалить поле» не выбрана.
+4. AGENTS.md: «X-macro `DataFields.inc`» → «4 доменных `fields/*.inc`»;
+   в блоке Структуры корневой `DataFields.inc` описан документационным
+   индексом (проверено: в `frontend/` ссылок нет, кодом не включается).
+5. Проверки `subscribe()`: `J1939System::begin` (4), `CommModule::begin`
+   (6), `ConfigStore::begin` (2), `WsHandler::reg` (1) → лог + отказ
+   модуля. Для этого добавлены деструкторы `~CommunicationModule()` и
+   отписка в `~ConfigStore()` — `makeModule` удаляет объект при ошибке
+   `begin()`, без отписки обработчики остались бы на удалённый объект.
+   (Возврат ошибки не ломает порядок загрузки: `comm`/`j1939`/`netctrl`
+   некритичны → degraded mode; `config` критичен, но отказ подписки =
+   исчерпание пула EventManager = системный сбой.)
+6. Host-тесты: дефолты `canNodeAddr`/`canBitrate`/`snapshotIntervalMs`/
+   `snapshotTtlMs` сверены с `Hw::`/`Timing::`.
+
+**СТОП.** Шаг завершён: `checks=106 failures=0` + сборка прошла.
 План завершён — сообщить пользователю итог сводной таблицей.
 
 ---
@@ -843,5 +882,5 @@ kFlagSnapshot, ..., -1)` (лог `n=` оставлен до вызова). NACK 
 | 8 | PUSH-спам телеметрии; лок при post; маг. состояния | J1939System.cpp | ☑ |
 | 9 | Дубль sendFrame; хрупкий NACK `st-1` | CommModule.cpp | ☑ |
 | 10 | Утечка static_ctx_t; молчаливые ошибки регистрации | ServerModule, StaticHandler, OtaApi | ☑ |
-| 11 | OOB DNS-парсер; TP packets=0 | simple_dns_server.cpp, J1939TransportProtocol.cpp | ☐ |
-| 12 | Хардкод-дубли; maxTrackedPgns; subscribe() | HardwareConfig, TwaiFields, J1939System, WsHandler, AGENTS.md | ☐ |
+| 11 | OOB DNS-парсер; TP packets=0 | simple_dns_server.cpp, J1939TransportProtocol.cpp | ☑ |
+| 12 | Хардкод-дубли; maxTrackedPgns; subscribe() | HardwareConfig, TwaiFields, J1939System, WsHandler, AGENTS.md | ☑ |

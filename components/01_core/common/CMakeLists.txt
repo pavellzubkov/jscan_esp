@@ -4,5 +4,5 @@ idf_component_register(
          "src/FieldRegistry.cpp"
     INCLUDE_DIRS "include"
                  "include/fields"
-    REQUIRES esp_event freertos log esp_driver_gpio
+    REQUIRES esp_event freertos log esp_driver_gpio esp_timer
 )

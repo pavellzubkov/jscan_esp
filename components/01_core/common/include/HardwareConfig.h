@@ -11,6 +11,10 @@ constexpr gpio_num_t kCanRxGpio = GPIO_NUM_4;
 // Битрейт J1939 по умолчанию (CAN 2.0B, 250 kbps). Актуальное значение —
 // конфигурируемое поле canBitrate (AppData), применяется при перезагрузке.
 constexpr uint32_t kCanBitrate = 250000;
+// Дефолты конфигурируемых TWAI-полей (TwaiFields.inc) и фолбэки чтения
+// из реестра (J1939System) — единый источник литералов 25 / 100.
+constexpr uint8_t  kDefaultNodeAddr    = 25;
+constexpr uint16_t kDefaultTxTimeoutMs = 100;
 // PGN служебных сообщений.
 constexpr uint32_t kPgnRequest   = 59904;   // RQST
 constexpr uint32_t kPgnTpCm      = 60416;   // TP.CM (connection management)

@@ -116,6 +116,21 @@ static void test_field_registry() {
     uint16_t timeout = 0;
     CHECK(reg.getByName("canTxTimeoutMs", timeout) && timeout == 100);
 
+    // Дефолты полей обязаны совпадать с константами Hw/Timing (единый
+    // источник литералов в HardwareConfig.h/SystemTiming.h).
+    uint8_t nodeAddr = 0;
+    CHECK(reg.getByName("canNodeAddr", nodeAddr) &&
+          nodeAddr == Hw::kDefaultNodeAddr);
+    uint32_t brDefault = 0;
+    CHECK(reg.getByName("canBitrate", brDefault) &&
+          brDefault == Hw::kCanBitrate);
+    uint32_t snapIv = 0;
+    CHECK(reg.getByName("snapshotIntervalMs", snapIv) &&
+          snapIv == Timing::kSnapshotIntervalMs);
+    uint32_t snapTtl = 0;
+    CHECK(reg.getByName("snapshotTtlMs", snapTtl) &&
+          snapTtl == Timing::kSnapshotTtlMs);
+
     // Запись uint32 (canBitrate) + чтение сериализованного значения.
     const uint32_t br = 500000;
     CHECK(reg.writeField(canBitrate_UID, &br, sizeof(br), FieldDomain::PROTOCOL) ==
