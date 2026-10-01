@@ -170,6 +170,20 @@ static void test_field_registry() {
     const size_t w4 = strWire(wire, longpw);   // 64 — недопустимо
     CHECK(reg.writeField(apPassword_UID, wire, w4, FieldDomain::PROTOCOL) ==
           FieldWriteStatus::OUT_OF_RANGE);
+
+    // writeFieldString: C-строка → wire {len, bytes} собирается сам.
+    CHECK(reg.writeFieldString(apSsid_UID, "NEW_SSID") == FieldWriteStatus::OK);
+    CHECK(reg.readField(apSsid_UID, out, sizeof(out), &outLen));
+    CHECK(outLen == 1 + 8);
+    CHECK(out[0] == 8 && std::memcmp(out + 1, "NEW_SSID", 8) == 0);
+
+    // 7 символов — недопустимый WPA2-пароль.
+    CHECK(reg.writeFieldString(apPassword_UID, "1234567") ==
+          FieldWriteStatus::OUT_OF_RANGE);
+
+    // Строка в числовое поле — защита от неверного вызова.
+    CHECK(reg.writeFieldString(canBitrate_UID, "500000") ==
+          FieldWriteStatus::BAD_LENGTH);
 }
 
 // ============================================================

@@ -193,3 +193,20 @@ FieldWriteStatus FieldRegistry::writeField(uint16_t uid, const void* value,
     }
     return FieldWriteStatus::OK;
 }
+
+FieldWriteStatus FieldRegistry::writeFieldString(uint16_t uid, const char* value) {
+    const FieldMeta* meta = getMetaByUid(uid);
+    if (!meta) return FieldWriteStatus::UNKNOWN_UID;
+    if (meta->validator != CFG_STRING && meta->validator != CFG_IP &&
+        meta->validator != CFG_PASSWORD) {
+        return FieldWriteStatus::BAD_LENGTH;   // не строковое поле
+    }
+    if (!value) return FieldWriteStatus::BAD_LENGTH;
+    size_t len = strlen(value);
+    if (len > 255) return FieldWriteStatus::BAD_LENGTH;
+
+    uint8_t buf[1 + 255];
+    buf[0] = static_cast<uint8_t>(len);
+    memcpy(buf + 1, value, len);
+    return writeField(uid, buf, 1 + len, meta->domain);
+}

@@ -67,6 +67,12 @@ class FieldRegistry {
     FieldWriteStatus writeField(uint16_t uid, const void* value,
                                 size_t len, FieldDomain owner);
 
+    // Запись строкового поля (CFG_STRING/CFG_IP/CFG_PASSWORD) из C-строки:
+    // сама конструирует wire {len, bytes} и вызывает writeField с доменом
+    // поля. Для FixedString вместо writeFieldScalar — тот передал бы сырые
+    // 64 байта, а валидатор ждёт префикс длины.
+    FieldWriteStatus writeFieldString(uint16_t uid, const char* value);
+
     // Type-safe чтение «сырого» значения по имени (удобство).
     template <typename T>
     bool getByName(const char* name, T& out) const {

@@ -260,7 +260,7 @@ subscriptions_[count-1]`), но `handler_args`, переданный в
 
 ---
 
-## Шаг 5. FieldRegistry: корректная запись строк (fwVersion)
+## Шаг 5. FieldRegistry: корректная запись строк (fwVersion) ✔
 
 **Цель.** Починить молчаливый отказ записи `FixedString`-полей через
 `writeFieldScalar` и добавить хелпер записи строк.
@@ -796,7 +796,7 @@ N рестартов, и валидный IP из любого источник�
 | 2 | OOB-read config.json; гонки dirty_/reset | ConfigStore.cpp | ☑ |
 | 3 | Type-confusion слотов unsubscribe | EventManager.h | ☑ |
 | 4 | Безлимитный malloc control-frame; client_count_ вне лока | WsHandler.cpp/.hpp, AppEvents.h | ☑ |
-| 5 | Запись FixedString всегда OUT_OF_RANGE | FieldRegistry.h/.cpp, SystemStatusModule.cpp | ☐ |
+| 5 | Запись FixedString всегда OUT_OF_RANGE | FieldRegistry.h/.cpp, SystemStatusModule.cpp | ☑ |
 | 6 | Утечки error-path begin(); TX-wait игнорируется | TwaiDriver.cpp | ☐ |
 | 7 | N рестартов AP на пачку; невалидный IP | WifiApModule, FieldRegistry.cpp | ☐ |
 | 8 | PUSH-спам телеметрии; лок при post; маг. состояния | J1939System.cpp | ☐ |

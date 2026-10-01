@@ -30,7 +30,11 @@ esp_err_t SystemStatusModule::begin()
     ctx_->fields.setDynamicReader(&SystemStatusModule::readDynamicSystemField);
 
     // fwVersion — статично, пишется один раз при старте.
-    ctx_->fields.writeFieldScalar(fwVersion_UID, FixedString(Hw::kFwVersion));
+    const FieldWriteStatus st =
+        ctx_->fields.writeFieldString(fwVersion_UID, Hw::kFwVersion);
+    if (st != FieldWriteStatus::OK) {
+        ESP_LOGE(TAG, "fwVersion write failed: %d", static_cast<int>(st));
+    }
 
     ESP_LOGI(TAG, "started (SYSTEM fields computed on read)");
     return ESP_OK;

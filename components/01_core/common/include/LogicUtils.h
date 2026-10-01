@@ -15,6 +15,8 @@ inline void sendField(AppContext* ctx, uint16_t uid)
 // Аналог «агрегатора» из TEMP_PID, но без центрального модуля: владелец
 // домена пишет своё поле сам, а эта функция избавляет от безусловного
 // sendField и лишнего PUSH-спама.
+// Для строковых полей (FixedString) здесь writeFieldScalar не годится —
+// используйте FieldRegistry::writeFieldString + sendField отдельно.
 template <typename T>
 bool updateField(AppContext* ctx, uint16_t uid, const T& value)
 {
