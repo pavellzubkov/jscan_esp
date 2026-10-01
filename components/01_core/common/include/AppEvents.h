@@ -16,6 +16,7 @@ enum class app_event_id_t : int32_t {
     WS_CLIENT_DISCONNECTED, // данные: ws_message_t (sockfd только)
     WIFI_STATUS,            // данные: wifi_status_event_t
     CONFIG_CHANGED,         // поле изменилось (данные: field_change_event_t, uid)
+    WIFI_REAPPLY,           // отложенное применение конфига AP (без данных)
     COMMUNICATION_SEND,     // отправить поле WS-клиентам (данные: communication_send_event_t)
     FACTORY_RESET,          // сброс к заводским настройкам (без данных)
     OTA_BEGIN,              // начало OTA: flash-операции идут (данные: ota_begin_event_t)

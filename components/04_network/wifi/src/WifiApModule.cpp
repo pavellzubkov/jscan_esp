@@ -8,6 +8,10 @@
 
 static const char* TAG = "WifiApModule";
 
+// Дебаунс live-apply: окно, за которое пачка изменений WIFI-полей сводится
+// к одному stop/start AP (500 мс).
+static constexpr int64_t kReapplyDebounceUs = 500000;
+
 WifiApModule::WifiApModule(AppContext* ctx) : ctx_(ctx) {}
 
 WifiApModule::~WifiApModule() {
@@ -51,14 +55,23 @@ void WifiApModule::onEvent(esp_event_base_t base, int32_t id, void* /*data*/) {
 }
 
 // Парсинг "a.b.c.d" в uint32 в network byte order (формат esp_ip4_addr_t.addr).
-// При невалидной строке остаются дефолтные 10.10.10.10.
+// Строгий разбор: ровно 4 октета, каждый 0..255, без мусора в хвосте —
+// поле apIp уже валидируется CFG_IP-валидатором в FieldRegistry, здесь это
+// вторая линия защиты. При любой ошибке — дефолт Hw::kApIp + лог.
 uint32_t WifiApModule::parseIp(const char* ip) {
-    int a = 10, b = 10, c = 10, d = 10;
-    if (ip) sscanf(ip, "%d.%d.%d.%d", &a, &b, &c, &d);
-    return (static_cast<uint32_t>(a) & 0xFF) |
-           ((static_cast<uint32_t>(b) & 0xFF) << 8) |
-           ((static_cast<uint32_t>(c) & 0xFF) << 16) |
-           ((static_cast<uint32_t>(d) & 0xFF) << 24);
+    int a = 0, b = 0, c = 0, d = 0;
+    char tail = '\0';
+    // %c ловит всё после 4-го октета: лишний символ → 5 conversions → отказ.
+    if (ip && sscanf(ip, "%d.%d.%d.%d%c", &a, &b, &c, &d, &tail) == 4 &&
+        a >= 0 && a <= 255 && b >= 0 && b <= 255 &&
+        c >= 0 && c <= 255 && d >= 0 && d <= 255) {
+        return (static_cast<uint32_t>(a) & 0xFF) |
+               ((static_cast<uint32_t>(b) & 0xFF) << 8) |
+               ((static_cast<uint32_t>(c) & 0xFF) << 16) |
+               ((static_cast<uint32_t>(d) & 0xFF) << 24);
+    }
+    ESP_LOGW(TAG, "invalid apIp '%s', using default", ip ? ip : "(null)");
+    return Hw::kApIp;
 }
 
 // Пересоздание DNS-сервера (captive portal) на актуальный IP AP.
@@ -92,8 +105,9 @@ esp_err_t WifiApModule::begin() {
     esp_wifi_set_ps(WIFI_PS_NONE);  // отключить power save
 
     ret = esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID,
-                                              &eventHandler, this, nullptr);
+                                              &eventHandler, this, &wifiEvtInst_);
     if (ret != ESP_OK) {
+        wifiEvtInst_ = nullptr;
         ESP_LOGE(TAG, "Failed to register wifi event handler: %s",
                  esp_err_to_name(ret));
         return ret;
@@ -105,9 +119,34 @@ esp_err_t WifiApModule::begin() {
         return ESP_FAIL;
     }
 
-    // Live-apply: переприменять конфиг AP при изменении WIFI-полей.
-    ctx_->events.subscribe(APP_EVENTS_BASE, app_event_id_t::CONFIG_CHANGED,
-                           &WifiApModule::onConfigChanged, this);
+    // Дебаунс live-apply: одноразовый таймер сводит пачку изменений WIFI-полей
+    // к одному stop/start. Ошибка создания — не фатально, включается fallback
+    // (немедленное применение в scheduleReapply).
+    esp_timer_create_args_t timerArgs = {};
+    timerArgs.callback = &WifiApModule::reapplyTimerCb;
+    timerArgs.arg = this;
+    timerArgs.dispatch_method = ESP_TIMER_TASK;
+    timerArgs.name = "wifi_reapply";
+    timerArgs.skip_unhandled_events = true;
+    ret = esp_timer_create(&timerArgs, &reapplyTimer_);
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "esp_timer_create failed: %s (immediate reapply)",
+                 esp_err_to_name(ret));
+        reapplyTimer_ = nullptr;
+    }
+
+    // Live-apply: переприменять конфиг AP при изменении WIFI-полей (с дебаунсом)
+    // и по отложенному событию WIFI_REAPPLY.
+    if (!ctx_->events.subscribe(APP_EVENTS_BASE, app_event_id_t::CONFIG_CHANGED,
+                                &WifiApModule::onConfigChanged, this)) {
+        ESP_LOGE(TAG, "subscribe(CONFIG_CHANGED) failed");
+        return ESP_FAIL;
+    }
+    if (!ctx_->events.subscribe(APP_EVENTS_BASE, app_event_id_t::WIFI_REAPPLY,
+                                &WifiApModule::onWifiReapply, this)) {
+        ESP_LOGE(TAG, "subscribe(WIFI_REAPPLY) failed");
+        return ESP_FAIL;
+    }
 
     ret = esp_wifi_set_mode(WIFI_MODE_AP);
     if (ret != ESP_OK) {
@@ -193,8 +232,35 @@ void WifiApModule::onConfigChanged(const field_change_event_t* evt) {
         return;   // не наше поле
     }
 
-    ESP_LOGI(TAG, "AP config changed (uid=0x%04X), re-applying",
+    ESP_LOGI(TAG, "AP config changed (uid=0x%04X), scheduling re-apply",
              evt->uid);
+    scheduleReapply();   // пачка изменений → одно применение после дебаунса
+}
+
+// Дебаунс: перезапустить одноразовый таймер (окно 500 мс). Если таймер не
+// создан — fallback: применить немедленно (поведение до дебаунса).
+void WifiApModule::scheduleReapply() {
+    if (reapplyTimer_) {
+        esp_err_t ret = esp_timer_restart(reapplyTimer_, kReapplyDebounceUs);
+        if (ret == ESP_OK) return;
+        ESP_LOGW(TAG, "esp_timer_restart failed: %s (immediate reapply)",
+                 esp_err_to_name(ret));
+    }
+    onWifiReapply();
+}
+
+// Колбэк таймера: работает в esp_timer task — wifi/netif API отсюда звать
+// нельзя, только thread-safe post в event-loop.
+void WifiApModule::reapplyTimerCb(void* arg) {
+    auto* self = static_cast<WifiApModule*>(arg);
+    if (self && self->ctx_) {
+        self->ctx_->events.post(APP_EVENTS_BASE, app_event_id_t::WIFI_REAPPLY);
+    }
+}
+
+// Отложенное применение конфига AP (из event-loop задачи — wifi API безопасен).
+void WifiApModule::onWifiReapply() {
+    if (!started_ || !netif_) return;   // AP остановлен — применять нечего
 
     if (applyConfig() != ESP_OK) {
         ESP_LOGE(TAG, "applyConfig failed on live change");
@@ -215,6 +281,24 @@ void WifiApModule::onConfigChanged(const field_change_event_t* evt) {
 }
 
 void WifiApModule::stop() {
+    // Отписка от шины событий — первой и идемпотентно: обработчики не должны
+    // дёргать модуль после остановки/удаления (stop() вызывается и из dtor,
+    // и при begin(), завершившемся ошибкой до started_ = true).
+    ctx_->events.unsubscribe(this);
+
+    // Дебаунс-таймер — до остановки wifi (порядок: таймер, затем wifi).
+    if (reapplyTimer_) {
+        esp_timer_stop(reapplyTimer_);
+        esp_timer_delete(reapplyTimer_);
+        reapplyTimer_ = nullptr;
+    }
+
+    if (wifiEvtInst_) {
+        esp_event_handler_instance_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID,
+                                              wifiEvtInst_);
+        wifiEvtInst_ = nullptr;
+    }
+
     if (!started_) return;
 
     // Остановка DNS-сервера (AP/captive portal)

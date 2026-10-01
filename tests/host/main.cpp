@@ -184,6 +184,30 @@ static void test_field_registry() {
     // Строка в числовое поле — защита от неверного вызова.
     CHECK(reg.writeFieldString(canBitrate_UID, "500000") ==
           FieldWriteStatus::BAD_LENGTH);
+
+    // CFG_IP: сверх длины (7..15) проверяются октеты (0..255, ровно 4).
+    const size_t wip = strWire(wire, "10.10.10.10");
+    CHECK(reg.writeField(apIp_UID, wire, wip, FieldDomain::PROTOCOL) ==
+          FieldWriteStatus::OK);
+    const size_t wip1 = strWire(wire, "999.1.1.1");   // октет > 255
+    CHECK(reg.writeField(apIp_UID, wire, wip1, FieldDomain::PROTOCOL) ==
+          FieldWriteStatus::OUT_OF_RANGE);
+    const size_t wip2 = strWire(wire, "1.2.3");        // всего 3 октета
+    CHECK(reg.writeField(apIp_UID, wire, wip2, FieldDomain::PROTOCOL) ==
+          FieldWriteStatus::OUT_OF_RANGE);
+    const size_t wip3 = strWire(wire, "10.10.10.");    // хвостовая точка
+    CHECK(reg.writeField(apIp_UID, wire, wip3, FieldDomain::PROTOCOL) ==
+          FieldWriteStatus::OUT_OF_RANGE);
+    const size_t wip4 = strWire(wire, "a.b.c.d");      // не цифры
+    CHECK(reg.writeField(apIp_UID, wire, wip4, FieldDomain::PROTOCOL) ==
+          FieldWriteStatus::OUT_OF_RANGE);
+    const size_t wip5 = strWire(wire, "10.10..10");    // пустой октет
+    CHECK(reg.writeField(apIp_UID, wire, wip5, FieldDomain::PROTOCOL) ==
+          FieldWriteStatus::OUT_OF_RANGE);
+
+    // Значение после отказа не изменилось (последняя валидная запись).
+    CHECK(reg.readField(apIp_UID, out, sizeof(out), &outLen));
+    CHECK(outLen == 1 + 11 && std::memcmp(out + 1, "10.10.10.10", 11) == 0);
 }
 
 // ============================================================

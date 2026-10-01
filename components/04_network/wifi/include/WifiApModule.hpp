@@ -1,5 +1,6 @@
 #pragma once
 #include "AppContext.h"
+#include "esp_timer.h"
 #include "esp_wifi.h"
 #include "esp_netif.h"
 #include <cstdint>
@@ -7,9 +8,11 @@
 class DnsServer;
 
 // SoftAP-точка доступа. Конфиг (ssid/pass/channel/maxStaConn/apIp) из ctx->adata.
-// Live-apply: подписка на CONFIG_CHANGED переприменяет конфиг AP (wifi_config_t +
-// статический IP) через esp_wifi_stop()/esp_wifi_start() — кратковременный обрыв,
-// клиенты переподключатся. Смена IP дополнительно пересоздаёт DNS-сервер.
+// Live-apply: пачка изменений WIFI-полей дебаунсится одноразовым esp_timer
+// (500 мс) → событие WIFI_REAPPLY → одно применение конфига (wifi_config_t +
+// статический IP) через esp_wifi_stop()/esp_wifi_start() вместо N рестартов —
+// кратковременный обрыв, клиенты переподключатся. Смена IP дополнительно
+// пересоздаёт DNS-сервер.
 // Публикует runtime-поля wifiClients/wifiApMode + WIFI_STATUS на событиях
 // AP_STACONNECTED/AP_STADISCONNECTED.
 // Владеет жизненным циклом DNS-сервера captive portal (весь DNS → IP AP).
@@ -27,6 +30,13 @@ private:
     DnsServer* dns_ = nullptr;
     bool started_ = false;
 
+    // Дебаунс live-apply: одноразовый таймер, по истечении которого в шину
+    // постится WIFI_REAPPLY (сам таймер работает в esp_timer task и не трогает
+    // wifi API напрямую). nullptr = fallback на немедленное применение.
+    esp_timer_handle_t reapplyTimer_ = nullptr;
+    // Обработчик WIFI_EVENT (esp_netif/wifi) — для корректного unregister в stop().
+    esp_event_handler_instance_t wifiEvtInst_ = nullptr;
+
     // Собрать и применить конфиг AP из adata: парсинг apIp → IP netif (dhcps),
     // wifi_config_t (ssid/pass/channel/maxStaConn) + DNS-сервер на актуальный IP.
     esp_err_t applyConfig();
@@ -38,4 +48,10 @@ private:
     static void eventHandler(void* arg, esp_event_base_t base, int32_t id, void* data);
     void onEvent(esp_event_base_t base, int32_t id, void* data);
     void onConfigChanged(const field_change_event_t* evt);
+    // Отложенное применение (колбэк WIFI_REAPPLY): тело live-apply из
+    // onConfigChanged. Вызывается из event-loop задачи — wifi API здесь безопасен.
+    void onWifiReapply();
+    // Дебаунс: перезапустить таймер; при его отсутствии — fallback, применить сейчас.
+    void scheduleReapply();
+    static void reapplyTimerCb(void* arg);
 };

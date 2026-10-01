@@ -382,7 +382,7 @@ wire-формат `{len u8, bytes}`. Первый байт строки (сим�
 
 ---
 
-## Шаг 7. WifiApModule: дебаунс live-apply + валидация IP
+## Шаг 7. WifiApModule: дебаунс live-apply + валидация IP ✔
 
 **Цель.** Один `esp_wifi_stop/start` на пачку изменений WIFI-полей вместо
 N рестартов, и валидный IP из любого источника.
@@ -810,7 +810,7 @@ N рестартов, и валидный IP из любого источник�
 | 4 | Безлимитный malloc control-frame; client_count_ вне лока | WsHandler.cpp/.hpp, AppEvents.h | ☑ |
 | 5 | Запись FixedString всегда OUT_OF_RANGE | FieldRegistry.h/.cpp, SystemStatusModule.cpp | ☑ |
 | 6 | Утечки error-path begin(); TX-wait игнорируется | TwaiDriver.cpp | ☑ |
-| 7 | N рестартов AP на пачку; невалидный IP | WifiApModule, FieldRegistry.cpp | ☐ |
+| 7 | N рестартов AP на пачку; невалидный IP | WifiApModule, FieldRegistry.cpp | ☑ |
 | 8 | PUSH-спам телеметрии; лок при post; маг. состояния | J1939System.cpp | ☐ |
 | 9 | Дубль sendFrame; хрупкий NACK `st-1` | CommModule.cpp | ☐ |
 | 10 | Утечка static_ctx_t; молчаливые ошибки регистрации | ServerModule, StaticHandler, OtaApi | ☐ |

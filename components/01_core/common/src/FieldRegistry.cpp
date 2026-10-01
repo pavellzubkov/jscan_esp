@@ -54,6 +54,33 @@ static int64_t readSignedLE(const uint8_t* p, size_t n) {
     return static_cast<int64_t>(v);
 }
 
+// Строка — корректный IPv4 "a.b.c.d": ровно 4 октета, каждый 0..255,
+// только цифры и точки, без пустых октетов и хвоста.
+// (Длина по min/max из meta не проверяется — это ответственность вызывающего.)
+static bool isValidIpv4(const char* s, size_t len) {
+    if (!s || len == 0 || len > 15) return false;
+    size_t i = 0;
+    unsigned octets = 0;
+    while (i < len) {
+        if (s[i] < '0' || s[i] > '9') return false;   // пустой октет / не цифра
+        unsigned v = 0;
+        int digits = 0;
+        while (i < len && s[i] >= '0' && s[i] <= '9') {
+            v = v * 10 + static_cast<unsigned>(s[i] - '0');
+            ++digits;
+            ++i;
+            if (digits > 3 || v > 255) return false;
+        }
+        if (++octets > 4) return false;
+        if (i < len) {
+            if (s[i] != '.') return false;
+            ++i;
+            if (i == len) return false;   // точка в конце
+        }
+    }
+    return octets == 4;
+}
+
 static bool valueInRange(const FieldMeta* meta, const uint8_t* payload, size_t payloadLen,
                          double minVal, double maxVal) {
     if (meta->validator == CFG_STRING || meta->validator == CFG_IP ||
@@ -63,7 +90,11 @@ static bool valueInRange(const FieldMeta* meta, const uint8_t* payload, size_t p
         if (sl != payloadLen - 1) return false;          // длина не совпадает
         if (meta->validator == CFG_PASSWORD)
             return (sl == 0) || ((sl >= 8) && (sl <= maxVal));  // пустой или 8..63
-        return (sl >= minVal) && (sl <= maxVal);
+        if ((sl < minVal) || (sl > maxVal)) return false;
+        // CFG_IP: сверх длины — строгий разбор октетов (999.1.1.1 и пр.).
+        if (meta->validator == CFG_IP)
+            return isValidIpv4(reinterpret_cast<const char*>(payload + 1), sl);
+        return true;
     }
     if (meta->validator == CFG_FLOAT) {
         if (payloadLen < sizeof(float)) return false;
