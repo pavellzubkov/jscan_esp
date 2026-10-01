@@ -209,7 +209,7 @@ subscriptions_[count-1]`), но `handler_args`, переданный в
 
 ---
 
-## Шаг 4. WsHandler: лимит control-frame + гонка client_count_
+## Шаг 4. WsHandler: лимит control-frame + гонка client_count_ ✔
 
 **Цель.** Закрыть безлимитный `malloc` на входящих WS-кадрах и чтение
 `client_count_` вне лока.
@@ -795,7 +795,7 @@ N рестартов, и валидный IP из любого источник�
 | 1 | UAF/дубликаты bigData + TTL-утечка | SnapshotAccumulator.cpp | ☑ |
 | 2 | OOB-read config.json; гонки dirty_/reset | ConfigStore.cpp | ☑ |
 | 3 | Type-confusion слотов unsubscribe | EventManager.h | ☑ |
-| 4 | Безлимитный malloc control-frame; client_count_ вне лока | WsHandler.cpp/.hpp, AppEvents.h | ☐ |
+| 4 | Безлимитный malloc control-frame; client_count_ вне лока | WsHandler.cpp/.hpp, AppEvents.h | ☑ |
 | 5 | Запись FixedString всегда OUT_OF_RANGE | FieldRegistry.h/.cpp, SystemStatusModule.cpp | ☐ |
 | 6 | Утечки error-path begin(); TX-wait игнорируется | TwaiDriver.cpp | ☐ |
 | 7 | N рестартов AP на пачку; невалидный IP | WifiApModule, FieldRegistry.cpp | ☐ |

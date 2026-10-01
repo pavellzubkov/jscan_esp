@@ -25,6 +25,9 @@ enum class app_event_id_t : int32_t {
 // Максимальная длина WS-сообщения = лимит батча снапшота (см. J1939Proto).
 constexpr size_t kMaxWsMessageLen = J1939Proto::kMaxBatchPayload;
 
+// Входящее WS-сообщение: лимит запросов клиентов (PARAM_SET/REQUEST).
+constexpr size_t kMaxWsInboundLen = 1024;
+
 struct ws_message_t {
     int  sockfd;   // -1 = broadcast
     size_t length;

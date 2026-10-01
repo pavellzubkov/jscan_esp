@@ -66,6 +66,7 @@ void WsHandler::add_client(int sockfd) {
 
 void WsHandler::remove_client(int sockfd) {
   bool removed = false;
+  int count_for_log = 0;
 
   taskENTER_CRITICAL(&ws_mux);
   for (int i = 0; i < client_count_; i++) {
@@ -79,11 +80,12 @@ void WsHandler::remove_client(int sockfd) {
       break;
     }
   }
+  count_for_log = client_count_; // читаем внутри критической секции
   taskEXIT_CRITICAL(&ws_mux);
 
   if (removed) {
     ESP_LOGI(TAG, "Client %d removed, total: %d (free heap: %u B)", sockfd,
-             client_count_, (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT));
+             count_for_log, (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT));
 
     ws_message_t msg = {};
     msg.sockfd = sockfd;
@@ -162,6 +164,13 @@ esp_err_t WsHandler::ws_handler(httpd_req_t *req) {
     // Сначала считываем payload (если есть)
     uint8_t *payload = nullptr;
     if (ws_pkt.len > 0) {
+      // Лимит до malloc: RFC 6455 §5.5 ограничивает control frame 125 Б,
+      // но снаружи это не проверяется — защита от OOM на огромной
+      // declared-длине.
+      if (ws_pkt.len > kMaxWsInboundLen) {
+        ESP_LOGW(TAG, "Control frame too large: %u, dropping", ws_pkt.len);
+        return ESP_ERR_INVALID_SIZE;
+      }
       payload = (uint8_t *)malloc(ws_pkt.len);
       if (payload) {
         ws_pkt.payload = payload;
@@ -215,7 +224,7 @@ esp_err_t WsHandler::ws_handler(httpd_req_t *req) {
     return ESP_OK;
   }
 
-  if (ws_pkt.len == 0 || ws_pkt.len > kMaxWsMessageLen) {
+  if (ws_pkt.len == 0 || ws_pkt.len > kMaxWsInboundLen) {
     ESP_LOGW(TAG, "Invalid WS message size: %d", ws_pkt.len);
     self->remove_client(sockfd);
     return ESP_ERR_INVALID_SIZE;
