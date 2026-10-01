@@ -177,8 +177,16 @@ void J1939System::sendRequest(const j1939_request_t& req)
     uint16_t txTimeoutMs = Hw::kDefaultTxTimeoutMs;
     ctx_->fields.getByName("canTxTimeoutMs", txTimeoutMs);
 
-    esp_err_t txErr = twai_.transmit(id, buf, sizeof(buf), pdMS_TO_TICKS(txTimeoutMs));
-    if (txErr != ESP_OK)
+    // canTxTimeoutMs — ограничение драйвера (поле в конфиге/протоколе),
+    // но TX RQST больше НЕ ждёт окончания передачи: timeout=0 = «кадр
+    // поставлен в очередь драйвера» (ESP_OK). Блокировка задачи на
+    // canTxTimeoutMs открывала окно для дропов RX, пока ISR сыпал кадры.
+    // fail_retry_cnt=-1 — драйвер ретранслирует сам.
+    esp_err_t txErr = twai_.transmit(id, buf, sizeof(buf), 0);
+    if (txErr == ESP_ERR_TIMEOUT)
+        ESP_LOGW(TAG, "RQST pgn=%lu tx queue full (canTxTimeoutMs=%u ignored for wait)",
+                 (unsigned long)req.pgn, txTimeoutMs);
+    else if (txErr != ESP_OK)
         ESP_LOGW(TAG, "RQST pgn=%lu tx failed: %s", (unsigned long)req.pgn,
                  esp_err_to_name(txErr));
 }
@@ -256,7 +264,16 @@ void J1939System::taskLoop()
         uint32_t waitMs = Timing::computeWaitMs(nextSnapshot, nextTelemetry,
                                                 now);
 
+        // Дренаж: обрабатываем ВСЕ накопившиеся кадры (timeout 0), иначе
+        // при полной шине пул слотов (16) исчерпывается быстрее, чем одна
+        // итерация цикла успевает взять кадр — дропы росли бы зря.
         TwaiDriver::RxFrame* frame = nullptr;
+        while (xQueueReceive(twai_.rxReadyQueue(), &frame, 0) == pdTRUE)
+        {
+            processFrame(*frame, Timing::nowMs());
+            xQueueSend(twai_.rxFreeQueue(), &frame, 0);   // вернуть слот
+        }
+        // Кадров нет — ждём ближайшего события/таймера (не дольше waitMs).
         if (xQueueReceive(twai_.rxReadyQueue(), &frame,
                           pdMS_TO_TICKS(waitMs)) == pdTRUE)
         {
@@ -292,6 +309,8 @@ void J1939System::updateTwaiStatus()
         updateField<uint8_t>(ctx_, twaiState_UID,
                              static_cast<uint8_t>(kStateStopped));
         updateField<bool>(ctx_, twaiStarted_UID, false);
+        updateField<uint32_t>(ctx_, twaiRxDrops_UID, twai_.rxDrops());
+        updateField<uint32_t>(ctx_, twaiTxDrops_UID, twai_.txDrops());
         return;
     }
 
@@ -323,6 +342,8 @@ void J1939System::updateTwaiStatus()
     updateField<uint8_t>(ctx_, twaiTxErr_UID, clampErrCnt(st.txErr));
     updateField<uint8_t>(ctx_, twaiRxErr_UID, clampErrCnt(st.rxErr));
     updateField<uint32_t>(ctx_, twaiRecoverCount_UID, twaiRecoverCount_);
+    updateField<uint32_t>(ctx_, twaiRxDrops_UID, twai_.rxDrops());
+    updateField<uint32_t>(ctx_, twaiTxDrops_UID, twai_.txDrops());
     updateField<uint16_t>(ctx_, activePgns_UID,
                           static_cast<uint16_t>(acc_.count()));
 }

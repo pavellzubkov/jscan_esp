@@ -30,12 +30,25 @@ bool TwaiDriver::rxDoneCb(twai_node_handle_t node,
         slot->frame.buffer_len = sizeof(slot->data);
         if (twai_node_receive_from_isr(node, &slot->frame) == ESP_OK)
         {
-            xQueueSendFromISR(self->rxReadyQueue_, &slot, &hpw);
+            // Консервация: free+ready+потребитель = rxSlots = глубина ready,
+            // поэтому переполнение ready практически невозможно — но проверка
+            // дёшева и спасает слот от «зависания» между очередями при будущих
+            // правках. При отказе слот возвращается в free, кадр считается дропом.
+            if (xQueueSendFromISR(self->rxReadyQueue_, &slot, &hpw) != pdTRUE)
+            {
+                xQueueSendFromISR(self->rxFreeQueue_, &slot, &hpw);
+                self->rxDrops_.fetch_add(1, std::memory_order_relaxed);
+            }
         }
         else
         {
             xQueueSendFromISR(self->rxFreeQueue_, &slot, &hpw);
         }
+    }
+    else
+    {
+        // Пул слотов исчерпан — кадр молча терялся; теперь считаем.
+        self->rxDrops_.fetch_add(1, std::memory_order_relaxed);
     }
     return (hpw == pdTRUE);
 }
@@ -173,8 +186,9 @@ esp_err_t TwaiDriver::begin(const Config& cfg)
 void TwaiDriver::end()
 {
     // Мьютекс дожидается transmit(), уже зашедшего в другую задачу; сам же
-    // end() должен вызываться после остановки задачи-отправителя (как и
-    // раньше — иначе узел удалялся бы под передачей).
+    // end() должен вызываться ПОСЛЕ полной остановки задач-отправителей —
+    // иначе узел удалялся бы под передачей, а убитая в transmit() задача
+    // навсегда захватила бы txMux_ (см. ~J1939System, ARCH_FIX2 шаг 12).
     if (txMux_ != nullptr)
         xSemaphoreTake(txMux_, portMAX_DELAY);
 
@@ -228,6 +242,7 @@ esp_err_t TwaiDriver::transmit(uint32_t id, const uint8_t* data, uint8_t dlc,
         if (w != ESP_OK)
         {
             ESP_LOGW(TAG, "tx pool busy, frame dropped (id=0x%lX)", (unsigned long)id);
+            txDrops_.fetch_add(1, std::memory_order_relaxed);
             return ESP_ERR_TIMEOUT;
         }
         releaseTxBlocks();
@@ -270,8 +285,12 @@ esp_err_t TwaiDriver::transmit(uint32_t id, const uint8_t* data, uint8_t dlc,
 
 esp_err_t TwaiDriver::recover()
 {
-    if (node_ == nullptr)
+    if (node_ == nullptr || txMux_ == nullptr)
         return ESP_ERR_INVALID_STATE;
+
+    // Под txMux_: disable/enable удаляет очередь TX — без лока возможна
+    // гонка с transmit(), уже зашедшим в другую задачу.
+    LockGuard lock(txMux_);
 
     // Новый драйвер: disable/enable очищает очереди и перезапускает узел
     twai_node_disable(node_);

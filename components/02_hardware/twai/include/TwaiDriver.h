@@ -5,6 +5,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
+#include <atomic>
 #include <cstdint>
 
 // «Глупый» драйвер TWAI: без AppContext, без событий, без задач приложения.
@@ -18,7 +19,8 @@ public:
         gpio_num_t rx = GPIO_NUM_4;
         uint32_t   bitrate      = 250000;
         uint8_t    txQueueDepth = 4;
-        uint8_t    rxSlots      = 8;      // размер пула ISR-слотов
+        uint8_t    rxSlots      = 16;     // размер пула ISR-слотов (полная шинная
+                                           // нагрузка исчерпывает 8 за миллисекунды)
         int        intrPriority = 1;
     };
 
@@ -70,6 +72,13 @@ public:
 
     bool started() const { return node_ != nullptr; }
 
+    // Дроп-счётчики (32-бит атомики — lock-free на ESP32, безопасно из ISR):
+    // rxDrops — в ISR не было свободного слота либо ready-очередь отказалась
+    // принять указатель (слот возвращается в free, кадр теряется);
+    // txDrops — пул TX-блоков исчерпан и кадр не поставлен в очередь драйвера.
+    uint32_t rxDrops() const { return rxDrops_.load(std::memory_order_relaxed); }
+    uint32_t txDrops() const { return txDrops_.load(std::memory_order_relaxed); }
+
 private:
     // ISR-колбэк приёма (см. .cpp): берёт слот из пула, заполняет и отдаёт в ready.
     static IRAM_ATTR bool rxDoneCb(twai_node_handle_t node,
@@ -105,4 +114,6 @@ private:
     TxBlock*        txPool_        = nullptr;
     uint16_t        txPoolSize_    = 0;
     SemaphoreHandle_t txMux_       = nullptr;   // сериализация transmit()/end()
+    std::atomic<uint32_t> rxDrops_ {0};         // потерянные RX-кадры (см. rxDrops())
+    std::atomic<uint32_t> txDrops_ {0};         // потерянные TX-кадры (см. txDrops())
 };

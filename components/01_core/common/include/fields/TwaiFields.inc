@@ -40,6 +40,16 @@ DATA_FIELD(uint8_t,     twaiRxErr,        0, 0, 255, CFG_UINT, false, true)
 // @group TWAI
 DATA_FIELD(uint32_t,    twaiRecoverCount, 0, 0, 0xFFFFFFFF, CFG_UINT, false, true)
 
+// @label Потери RX
+// @description Кадры, потерянные приёмом (нет свободного слота пула ISR)
+// @group TWAI
+DATA_FIELD(uint32_t,    twaiRxDrops,      0, 0, 0xFFFFFFFF, CFG_UINT, false, true)
+
+// @label Потери TX
+// @description Кадры, не поставленные в очередь передачи (пул TX исчерпан)
+// @group TWAI
+DATA_FIELD(uint32_t,    twaiTxDrops,      0, 0, 0xFFFFFFFF, CFG_UINT, false, true)
+
 // @label TWAI запущен
 // @description Флаг запущенного драйвера TWAI
 // @group TWAI
