@@ -1,6 +1,9 @@
 #include "J1939TransportProtocol.h"
 #include "SystemTiming.h"
 #include <cstring>
+#include <esp_log.h>
+
+static const char* TAG_TP = "TP";
 
 void J1939TransportProtocol::reset()
 {
@@ -24,6 +27,18 @@ void J1939TransportProtocol::onTpCm(const J1939PgnMsg& msg)
 
     if (totalLen == 0 || totalLen > J1939Proto::kJ1939MaxDataLen)
         return;
+
+    // Валидация числа пакетов: по спецификации packets == ceil(totalLen/7).
+    // packets == 0 далее превратил бы packetsRemaining-- в 255 (uint8_t) —
+    // сессия висела бы до таймаута и «съедала» бы слот.
+    const uint8_t expectedPackets =
+        static_cast<uint8_t>((totalLen + 6) / 7);   // ceil(len/7), max 255
+    if (packets == 0 || packets != expectedPackets)
+    {
+        ESP_LOGD(TAG_TP, "TP.CM rejected: packets=%u expected=%u len=%u",
+                 unsigned(packets), unsigned(expectedPackets), unsigned(totalLen));
+        return;   // некорректный BAM — сессия не создаётся
+    }
 
     // Старая незавершённая сессия того же узла — перезапустить
     for (auto& s : sessions_)

@@ -219,16 +219,23 @@ int DnsServer::buildDnsResponse(uint8_t* request, int request_len,
                 break;
             }
             if ((c & 0xC0) == 0xC0) {
+                // Указатель сжатия занимает 2 байта — оба должны быть
+                // внутри пакета (иначе ptr > end и далее end - ptr
+                // переполнится в огромный size_t).
+                if ((size_t)(end - ptr) < 2) return 0;
                 ptr += 2; // указатель сжатия — сам по себе полное имя
                 break;
             }
             ptr += (size_t)c + 1; // метка + её данные
             if (ptr > end) return 0; // метка выходит за границу пакета
         }
-        // Type (2) + Class (2)
-        if ((size_t)(end - ptr) < 4) return 0;
+        // Type (2) + Class (2); ptr <= end гарантировано циклом выше,
+        // но проверяем и это — от этого значения зависит questions_size.
+        if (ptr > end || (size_t)(end - ptr) < 4) return 0;
         ptr += 4;
     }
+
+    if (ptr > end) return 0; // вопросы вышли за границу пакета
 
     questions_size = ptr - question_start;
 
