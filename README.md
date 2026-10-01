@@ -22,7 +22,9 @@ components/
                          J1939System (1 задача: rx + снапшот-таймер)
   04_network/wifi/     — WifiApModule (softAP, публикует WIFI_STATUS)
   04_network/server/   — ServerModule + StaticHandler (LittleFS) + WsHandler (WS)
-  04_network/communication/ — CommunicationModule: кадр/CRC/диспатч команд, обёртка батча
+  04_network/communication/ — CommunicationModule: диспатч команд + канал
+                         параметров, FrameTx (кодировщик кадров),
+                         J1939Channel (снапшоты + аудитория WS-клиентов)
   04_network/netctrl/  — NetworkController: владеет wifi + server
   05_storage/esp_littlefs/ — вендоренный LittleFS (esp_littlefs, Kconfig + project_include.cmake)
   05_storage/littlefs_service/ — обёртка над esp_littlefs (mount/read/stream)
@@ -40,7 +42,9 @@ BootManager в порядке приоритетов:
 | `j1939` (J1939System) | 70 | false | TWAI-приём, TP, снапшоты |
 
 Правило владения: `ctx->config` пишет только ConfigStore; снапшоты идут
-J1939System → CommunicationModule → WsHandler (WS broadcast).
+J1939System → CommunicationModule → WsHandler (WS broadcast). J1939System
+про WS не знает: она безусловно публикует снапшот, а отправлять ли его (и
+есть ли слушатели) решает подмодуль `J1939Channel` в CommunicationModule.
 
 ## Протокол
 
@@ -56,8 +60,16 @@ SPN-декод выполняется на фронтенде.
 
 ```bash
 idf.py reconfigure   # создаёт build/compile_commands.json и managed_components/
-idf.py build         # единственная проверка (тестов/линтера нет)
+idf.py build         # основная проверка (линтера нет)
 idf.py -p <COMx> flash monitor
+```
+
+Host-тесты (без IDF, C++17; покрытие: J1939Proto/FieldRegistry/
+SnapshotAccumulator/тайминг):
+
+```bash
+cmake -S tests/host -B build/host && cmake --build build/host
+./build/host/host_tests
 ```
 
 Кастомная таблица разделов `partitions_new.csv` (флеш 16MB): bootloader +

@@ -112,11 +112,7 @@ esp_err_t J1939System::begin()
         ctx_->events.subscribe(APP_EVENTS_BASE, app_event_id_t::J1939_REQUEST,
                                &J1939System::onJ1939Request, this) &&
         ctx_->events.subscribe(APP_EVENTS_BASE, app_event_id_t::CONFIG_CHANGED,
-                               &J1939System::onConfigChanged, this) &&
-        ctx_->events.subscribe(APP_EVENTS_BASE, app_event_id_t::WS_CLIENT_CONNECTED,
-                               &J1939System::onWsClientConnected, this) &&
-        ctx_->events.subscribe(APP_EVENTS_BASE, app_event_id_t::WS_CLIENT_DISCONNECTED,
-                               &J1939System::onWsClientDisconnected, this);
+                               &J1939System::onConfigChanged, this);
     if (!subsOk)
     {
         ESP_LOGE(TAG, "event subscribe failed, abort start");
@@ -184,17 +180,6 @@ void J1939System::sendRequest(const j1939_request_t& req)
     if (txErr != ESP_OK)
         ESP_LOGW(TAG, "RQST pgn=%lu tx failed: %s", (unsigned long)req.pgn,
                  esp_err_to_name(txErr));
-}
-
-void J1939System::onWsClientConnected(const ws_message_t* /*msg*/)
-{
-    ++wsClients_;
-}
-
-void J1939System::onWsClientDisconnected(const ws_message_t* /*msg*/)
-{
-    if (wsClients_.load() > 0)
-        --wsClients_;
 }
 
 void J1939System::onConfigChanged(const field_change_event_t* evt)
@@ -368,9 +353,8 @@ void J1939System::processAssembled(const J1939AssembledMsg& msg, uint32_t nowMs)
 
 void J1939System::sendSnapshot(uint32_t nowMs)
 {
-    if (wsClients_.load() == 0)
-        return;   // нет WS-клиентов — батч не строим и не аллоцируем
-
+    // Публикация безусловна: гейт «аудитории нет» живёт в J1939Channel
+    // (Comm) — здесь только домен: сбор активных записей и батч.
     const SnapshotAccumulator::Record* recs = nullptr;
     uint32_t ttlMs = Timing::kSnapshotTtlMs;
     ctx_->fields.getByName("snapshotTtlMs", ttlMs);

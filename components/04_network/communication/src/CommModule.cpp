@@ -5,7 +5,6 @@
 #include "J1939Proto.h"
 #include "LogicUtils.h"
 #include "esp_log.h"
-#include <cstdlib>
 #include <cstring>
 
 namespace {
@@ -27,7 +26,7 @@ uint8_t nackCodeFromStatus(FieldWriteStatus st)
 }
 
 CommunicationModule::CommunicationModule(AppContext* ctx)
-    : ctx_(ctx)
+    : ctx_(ctx), tx_(ctx), j1939_(ctx, &tx_)
 {
 }
 
@@ -44,8 +43,6 @@ esp_err_t CommunicationModule::begin()
     const bool subsOk =
         ctx_->events.subscribe(APP_EVENTS_BASE, app_event_id_t::WS_MESSAGE_RECEIVED,
                                &CommunicationModule::onIncomingPacket, this) &&
-        ctx_->events.subscribe(APP_EVENTS_BASE, app_event_id_t::J1939_SNAPSHOT_SEND,
-                               &CommunicationModule::onSnapshot, this) &&
         ctx_->events.subscribe(APP_EVENTS_BASE, app_event_id_t::WS_CLIENT_CONNECTED,
                                &CommunicationModule::onWsClientConnected, this) &&
         ctx_->events.subscribe(APP_EVENTS_BASE, app_event_id_t::WS_CLIENT_DISCONNECTED,
@@ -59,6 +56,10 @@ esp_err_t CommunicationModule::begin()
         ESP_LOGE(TAG, "event subscribe failed, abort start");
         return ESP_FAIL;
     }
+    // J1939-ветка (снапшоты + аудитория WS): при ошибке откат делает dtor
+    // (снимает подписки обоих объектов).
+    if (j1939_.begin() != ESP_OK)
+        return ESP_FAIL;
     ESP_LOGI(TAG, "CommunicationModule ready");
     return ESP_OK;
 }
@@ -86,20 +87,8 @@ void CommunicationModule::onIncomingPacket(const ws_message_t* msg)
     {
     case J1939Proto::kMsgTypeRequest:
     {
-        if (payloadLen < 5)
-        {
-            ESP_LOGW(TAG, "J1939_REQUEST payload too short (%u B)",
-                     (unsigned)payloadLen);
-            return;
-        }
-        j1939_request_t req;
-        req.dstAddr = payload[0];
-        req.pgn = static_cast<uint32_t>(payload[1]) |
-                  (static_cast<uint32_t>(payload[2]) << 8) |
-                  (static_cast<uint32_t>(payload[3]) << 16);
-        ESP_LOGI(TAG, "RQST pgn=%lu dst=%u", (unsigned long)req.pgn,
-                 req.dstAddr);
-        ctx_->events.post(APP_EVENTS_BASE, app_event_id_t::J1939_REQUEST, req);
+        // J1939-ветка протокола — в подмодуле (парсинг + post J1939_REQUEST).
+        j1939_.onClientRequest(payload, payloadLen);
         break;
     }
     case J1939Proto::kMsgTypeParamRequest:
@@ -182,57 +171,6 @@ void CommunicationModule::onIncomingPacket(const ws_message_t* msg)
     }
 }
 
-void CommunicationModule::onSnapshot(const j1939_snapshot_t* snap)
-{
-    if (!snap || snap->length == 0)
-        return;
-
-    // Тот же путь, что и для любых исходящих кадров: malloc frame →
-    // wrapFrame → malloc ws_message → postSized → free.
-    ESP_LOGD(TAG, "snapshot %u B, n=%u", (unsigned)snap->length,
-             (unsigned)snap->data[0]);
-    sendFrame(J1939Proto::kMsgTypeSnapshot, J1939Proto::kFlagSnapshot,
-              snap->data, snap->length, -1);
-}
-
-// Обёртка готового payload в кадр + отправка WS-клиенту(ам).
-// sockfd=-1 → broadcast всем, иначе адресная отправка конкретному сокету.
-void CommunicationModule::sendFrame(uint16_t msgType, uint8_t flags,
-                                    const uint8_t* payload, size_t payloadLen,
-                                    int sockfd)
-{
-    const size_t frameCap = J1939Proto::kHeaderSize + payloadLen +
-                            J1939Proto::kCrcSize;
-    uint8_t* frame = static_cast<uint8_t*>(malloc(frameCap));
-    if (!frame)
-        return;
-
-    const size_t frameLen = J1939Proto::wrapFrame(
-        msgType, flags, payload, payloadLen, tx_seq_++, frame, frameCap);
-    if (frameLen == 0)
-    {
-        free(frame);
-        return;
-    }
-
-    const size_t msgSize = sizeof(ws_message_t) + frameLen;
-    ws_message_t* msg = static_cast<ws_message_t*>(malloc(msgSize));
-    if (!msg)
-    {
-        free(frame);
-        return;
-    }
-
-    msg->sockfd = sockfd;
-    msg->length = frameLen;
-    memcpy(msg->data, frame, frameLen);
-    free(frame);
-
-    ctx_->events.postSized(APP_EVENTS_BASE, app_event_id_t::WS_MESSAGE_SEND,
-                           msg, msgSize);
-    free(msg);
-}
-
 // Отправка значения поля: {uid u16 LE, value} в кадре заданного MsgType.
 void CommunicationModule::sendValueFrame(uint16_t msgType, uint16_t uid,
                                          int sockfd)
@@ -247,7 +185,7 @@ void CommunicationModule::sendValueFrame(uint16_t msgType, uint16_t uid,
     size_t vlen = 0;
     if (!ctx_->fields.readField(uid, payload + 2, sizeof(payload) - 2, &vlen))
         return;
-    sendFrame(msgType, 0, payload, 2 + vlen, sockfd);
+    tx_.send(msgType, 0, payload, 2 + vlen, sockfd);
 }
 
 // Ответ об ошибке: {uid u16 LE, err u8}.
@@ -257,8 +195,8 @@ void CommunicationModule::sendNack(uint16_t uid, uint8_t err, int sockfd)
     payload[0] = static_cast<uint8_t>(uid & 0xFF);
     payload[1] = static_cast<uint8_t>(uid >> 8);
     payload[2] = err;
-    sendFrame(J1939Proto::kMsgTypeParamNack, 0, payload, sizeof(payload),
-              sockfd);
+    tx_.send(J1939Proto::kMsgTypeParamNack, 0, payload, sizeof(payload),
+             sockfd);
     ESP_LOGW(TAG, "PARAM_NACK uid=0x%04X err=%u", uid, err);
 }
 

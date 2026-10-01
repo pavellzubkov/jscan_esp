@@ -44,9 +44,17 @@ void WsHandler::add_client(int sockfd) {
 
   if (client_count_ >= kMaxClients) {
     int rejected = sockfd;
+    bool was_connected = already_connected;
     taskEXIT_CRITICAL(&ws_mux);
     // Логирование — ВНЕ критической секции!
     ESP_LOGW(TAG, "Max clients reached, rejecting sockfd: %d", rejected);
+    // Запись этого sockfd уже была удалена выше — без DISCONNECTED
+    // счётчики аудитории (J1939Channel) уехали бы вверх.
+    if (was_connected) {
+      ws_message_t dmsg = {};
+      dmsg.sockfd = rejected;
+      ctx_->events.post(APP_EVENTS_BASE, app_event_id_t::WS_CLIENT_DISCONNECTED, dmsg);
+    }
     // Закрываем сокет, чтобы клиент не висел подключённым без доставки данных.
     if (server_) {
       httpd_sess_trigger_close(server_, rejected);
@@ -67,6 +75,12 @@ void WsHandler::add_client(int sockfd) {
 
   ws_message_t msg = {};
   msg.sockfd = sockfd;
+  if (already_connected) {
+    // Повторная регистрация того же sockfd: старое соединение закрылось
+    // без remove_client — балансируем парой DISCONNECTED/CONNECTED,
+    // иначе счётчики аудитории уедут вверх.
+    ctx_->events.post(APP_EVENTS_BASE, app_event_id_t::WS_CLIENT_DISCONNECTED, msg);
+  }
   ctx_->events.post(APP_EVENTS_BASE, app_event_id_t::WS_CLIENT_CONNECTED, msg);
 }
 
@@ -100,8 +114,14 @@ void WsHandler::remove_client(int sockfd) {
 }
 
 void WsHandler::cleanup_clients() {
+  int removed[kMaxClients];
+  int old_count = 0;
+
   taskENTER_CRITICAL(&ws_mux);
-  int old_count = client_count_;
+  old_count = client_count_;
+  for (int i = 0; i < old_count; i++) {
+    removed[i] = connected_clients_[i];
+  }
   client_count_ = 0;
   memset(connected_clients_, 0, sizeof(connected_clients_));
   taskEXIT_CRITICAL(&ws_mux);
@@ -109,6 +129,14 @@ void WsHandler::cleanup_clients() {
   // Логирование — ВНЕ критической секции.
   if (old_count > 0) {
     ESP_LOGI(TAG, "Cleaned up %d client(s)", old_count);
+    // Пара к каждому WS_CLIENT_CONNECTED: без DISCONNECTED счётчики
+    // аудитории (J1939Channel) зависли бы >0 после рестарта httpd и
+    // снапшоты продолжали бы уходить в пустоту.
+    for (int i = 0; i < old_count; i++) {
+      ws_message_t msg = {};
+      msg.sockfd = removed[i];
+      ctx_->events.post(APP_EVENTS_BASE, app_event_id_t::WS_CLIENT_DISCONNECTED, msg);
+    }
   }
 }
 
