@@ -4,6 +4,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <unistd.h>
+#include <utility>
 
 /**
  * @brief Сервис для работы с LittleFS
@@ -22,12 +24,48 @@ public:
 
     /**
      * @brief Открытый файл для потоковой передачи (чанкового чтения)
+     *
+     * RAII: fd закрывается в деструкторе — ранний return вызывающего больше
+     * не утёчет дескриптором. Копирование запрещено (двойное close),
+     * возврат/присваивание — только через move (источник обнуляется).
+     * Явное закрытие — close()/closeStream(); после закрытия деструктор no-op.
      */
     struct FileStream {
         int fd = -1;          ///< файловый дескриптор, -1 = не открыт
         size_t size = 0;      ///< размер файла в байтах
         bool is_gz = false;   ///< отдаётся ли сжатая (.gz) версия
         bool ok = false;      ///< успешно ли открыт
+
+        FileStream() = default;
+        ~FileStream() { close(); }
+
+        FileStream(const FileStream&) = delete;
+        FileStream& operator=(const FileStream&) = delete;
+
+        FileStream(FileStream&& o) noexcept { *this = std::move(o); }
+        FileStream& operator=(FileStream&& o) noexcept {
+            if (this != &o) {
+                close();
+                fd = o.fd;
+                size = o.size;
+                is_gz = o.is_gz;
+                ok = o.ok;
+                o.fd = -1;
+                o.size = 0;
+                o.is_gz = false;
+                o.ok = false;
+            }
+            return *this;
+        }
+
+        // Явное закрытие (идемпотентно); деструктор вызовет снова — no-op.
+        void close() {
+            if (fd >= 0) {
+                ::close(fd);
+                fd = -1;
+            }
+            ok = false;
+        }
     };
 
     /**

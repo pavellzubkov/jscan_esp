@@ -77,15 +77,13 @@ uint32_t WifiApModule::parseIp(const char* ip) {
 // Пересоздание DNS-сервера (captive portal) на актуальный IP AP.
 void WifiApModule::restartDns(uint32_t ip) {
     if (dns_) {
-        dns_->stop();
-        delete dns_;
-        dns_ = nullptr;
+        dns_->stop();   // остановить задачу ДО удаления объекта (UAF)
+        dns_.reset();
     }
-    dns_ = new DnsServer(ip);
+    dns_ = std::make_unique<DnsServer>(ip);
     if (dns_ && !dns_->start()) {
         ESP_LOGW(TAG, "Failed to start DNS server");
-        delete dns_;
-        dns_ = nullptr;
+        dns_.reset();
     } else {
         ESP_LOGI(TAG, "Captive portal DNS server started (ip=0x%08lX)",
                  (unsigned long)ip);
@@ -95,13 +93,21 @@ void WifiApModule::restartDns(uint32_t ip) {
 esp_err_t WifiApModule::begin() {
     if (started_) return ESP_OK;
 
+    // Откат при ЛЮБОЙ ошибке — через stop(). Поэтому stop() обязан быть
+    // ресурсо-ориентированным (проверяет хэндлы/флаги, а не started_):
+    // частично созданные netif_/dns_/wifi-init освобождаются всегда,
+    // а не только когда begin() дошёл до started_ = true (иначе утечка).
+    // Примечание: makeModule удалит объект при ошибке begin(), но полагаться
+    // на это как на ЕДИНСТВЕННЫЙ откат нельзя — stop() здесь делает явный откат.
+
     // esp_netif_init() гарантирует NetworkController::begin() перед вызовом.
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     esp_err_t ret = esp_wifi_init(&cfg);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "esp_wifi_init failed: %s", esp_err_to_name(ret));
-        return ret;
+        return ret;   // ресурсов ещё нет — откат не нужен
     }
+    wifiInited_ = true;
     esp_wifi_set_ps(WIFI_PS_NONE);  // отключить power save
 
     ret = esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID,
@@ -110,12 +116,14 @@ esp_err_t WifiApModule::begin() {
         wifiEvtInst_ = nullptr;
         ESP_LOGE(TAG, "Failed to register wifi event handler: %s",
                  esp_err_to_name(ret));
+        stop();
         return ret;
     }
 
     netif_ = esp_netif_create_default_wifi_ap();
     if (!netif_) {
         ESP_LOGE(TAG, "Failed to create default wifi AP netif");
+        stop();
         return ESP_FAIL;
     }
 
@@ -140,27 +148,32 @@ esp_err_t WifiApModule::begin() {
     if (!ctx_->events.subscribe(APP_EVENTS_BASE, app_event_id_t::CONFIG_CHANGED,
                                 &WifiApModule::onConfigChanged, this)) {
         ESP_LOGE(TAG, "subscribe(CONFIG_CHANGED) failed");
+        stop();
         return ESP_FAIL;
     }
     if (!ctx_->events.subscribe(APP_EVENTS_BASE, app_event_id_t::WIFI_REAPPLY,
                                 &WifiApModule::onWifiReapply, this)) {
         ESP_LOGE(TAG, "subscribe(WIFI_REAPPLY) failed");
+        stop();
         return ESP_FAIL;
     }
 
     ret = esp_wifi_set_mode(WIFI_MODE_AP);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "esp_wifi_set_mode failed: %s", esp_err_to_name(ret));
+        stop();
         return ret;
     }
     ret = applyConfig();
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "applyConfig failed: %s", esp_err_to_name(ret));
+        stop();
         return ret;
     }
     ret = esp_wifi_start();
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "esp_wifi_start failed: %s", esp_err_to_name(ret));
+        stop();
         return ret;
     }
 
@@ -281,9 +294,13 @@ void WifiApModule::onWifiReapply() {
 }
 
 void WifiApModule::stop() {
-    // Отписка от шины событий — первой и идемпотентно: обработчики не должны
-    // дёргать модуль после остановки/удаления (stop() вызывается и из dtor,
-    // и при begin(), завершившемся ошибкой до started_ = true).
+    // Ресурсо-ориентированная очистка: каждый шаг проверяет СВОЁ состояние
+    // (хэндл/флаг), а не общий started_. Поэтому stop() безопасен на любом
+    // этапе begin() — он же служит откатом error-path'ов в begin() и dtor.
+    // Идемпотентен: повторные вызовы (dtor после ручного stop) — no-op.
+
+    // Отписка от шины событий — первой: обработчики не должны дёргать
+    // модуль после остановки/удаления.
     ctx_->events.unsubscribe(this);
 
     // Дебаунс-таймер — до остановки wifi (порядок: таймер, затем wifi).
@@ -299,21 +316,33 @@ void WifiApModule::stop() {
         wifiEvtInst_ = nullptr;
     }
 
-    if (!started_) return;
-
-    // Остановка DNS-сервера (AP/captive portal)
+    // Остановка DNS-сервера (AP/captive portal) — независимо от started_:
+    // dns_ создаётся в applyConfig() ещё ДО esp_wifi_start.
     if (dns_) {
-        dns_->stop();
-        delete dns_;
-        dns_ = nullptr;
+        dns_->stop();   // остановить задачу ДО удаления объекта (UAF)
+        dns_.reset();   // unique_ptr удаляет объект; dtor вызовет stop() ещё
+                        // раз — он идемпотентен
     }
 
-    esp_wifi_stop();
-    esp_wifi_deinit();
+    const bool wasStarted = started_;
+
+    if (started_) {
+        esp_wifi_stop();
+        started_ = false;
+    }
+
+    // esp_wifi_deinit — строго при удавшемся esp_wifi_init (флаг wifiInited_):
+    // без флага деинициализировали бы нетронутый драйвер на ранних error-path.
+    if (wifiInited_) {
+        esp_wifi_deinit();
+        wifiInited_ = false;
+    }
+
     if (netif_) {
         esp_netif_destroy_default_wifi(netif_);
         netif_ = nullptr;
     }
-    started_ = false;
-    ESP_LOGI(TAG, "softAP stopped");
+
+    if (wasStarted)
+        ESP_LOGI(TAG, "softAP stopped");
 }

@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
+#include <memory>
 #include <sys/stat.h>
 #include <unistd.h>
 #include <vector>
@@ -255,23 +256,25 @@ void ConfigStore::loadFromFs() {
 
     // st_size+1 и явный NUL: cJSON_Parse читает строку, буфер ровно в размер
     // файла давал OOB-read за границей (мусор после данных ломал парсинг).
-    char* buf = static_cast<char*>(malloc(static_cast<size_t>(st.st_size) + 1));
+    // unique_ptr с deleter free: освобождение на всех путях выхода (RAII);
+    // раньше — ручной free в 3 точках (пропуск = утечка).
+    std::unique_ptr<char, decltype(&std::free)> buf(
+        static_cast<char*>(std::malloc(static_cast<size_t>(st.st_size) + 1)),
+        &std::free);
     if (!buf) {
         close(fd);
         dirty_.store(true);
         return;
     }
-    ssize_t rd = read(fd, buf, static_cast<size_t>(st.st_size));
+    ssize_t rd = read(fd, buf.get(), static_cast<size_t>(st.st_size));
     close(fd);
     if (rd != st.st_size) {
-        free(buf);
         dirty_.store(true);
         return;
     }
-    buf[rd] = '\0';
+    buf.get()[rd] = '\0';
 
-    cJSON* root = cJSON_Parse(buf);
-    free(buf);
+    cJSON* root = cJSON_Parse(buf.get());
     if (!root) {
         ESP_LOGE(TAG, "Config JSON parse failed, using defaults");
         dirty_.store(true);
@@ -381,12 +384,15 @@ void ConfigStore::saveToFs() {
         ESP_LOGE(TAG, "OOM creating config JSON");
         return;
     }
-    char* text = cJSON_PrintUnformatted(root);
+    char* textRaw = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
-    if (!text) {
+    if (!textRaw) {
         ESP_LOGE(TAG, "OOM printing config JSON");
         return;
     }
+    // unique_ptr с deleter cJSON_free: освобождение на всех путях выхода
+    // (раньше — ручной cJSON_free в 3 точках, пропуск = утечка строки JSON).
+    std::unique_ptr<char, decltype(&cJSON_free)> text(textRaw, &cJSON_free);
 
     // Атомарная запись: пишем tmp, проталкиваем в flash (fsync), затем rename —
     // LittleFS rename атомарен, при сбое питания конфиг не «уполовинивается».
@@ -397,12 +403,11 @@ void ConfigStore::saveToFs() {
     if (fd < 0) {
         ESP_LOGE(TAG, "Failed to open '%s' for write (errno=%d)",
                  tmp.c_str(), errno);
-        cJSON_free(text);
         return;
     }
 
-    const char* p = text;
-    size_t remaining = strlen(text);
+    const char* p = text.get();
+    size_t remaining = strlen(text.get());
     while (remaining > 0) {
         ssize_t w = write(fd, p, remaining);
         if (w < 0) {
@@ -410,7 +415,6 @@ void ConfigStore::saveToFs() {
             ESP_LOGE(TAG, "Failed to write config '%s' (errno=%d)",
                      tmp.c_str(), errno);
             close(fd);
-            cJSON_free(text);
             return;
         }
         p += w;
@@ -418,7 +422,6 @@ void ConfigStore::saveToFs() {
     }
     fsync(fd);
     close(fd);
-    cJSON_free(text);
 
     if (rename(tmp.c_str(), full.c_str()) != 0) {
         ESP_LOGE(TAG, "Failed to rename '%s' -> '%s' (errno=%d)",

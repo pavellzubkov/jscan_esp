@@ -53,7 +53,12 @@ bool DnsServer::start(uint16_t port, int stack_size, UBaseType_t prio) {
 }
 
 void DnsServer::stop() {
-    if (!running_.load()) return;
+    // Ранний return по !running_ был багом: задача сама выходит при ошибках
+    // сокета (run(): socket/bind/recvfrom), выставляет running_ = false —
+    // и stop() пропускал удаление doneSem_ (утечка) + оставлял task_ висеть.
+
+    // Ожидание нужно, только если задача создавалась (task_ + семафор есть).
+    const bool needWait = (task_ != nullptr && doneSem_ != nullptr);
 
     running_.store(false);
 
@@ -63,11 +68,27 @@ void DnsServer::stop() {
         sock_ = -1;
     }
 
-    // Ждем завершения задачи (задача даёт doneSem_ перед vTaskDelete).
-    // Без этого delete dns_ в WifiApModule может застать run() живым (UAF).
-    if (task_ && doneSem_) {
-        xSemaphoreTake(doneSem_, 2000 / portTICK_PERIOD_MS);
-        task_ = nullptr;
+    if (needWait) {
+        // Ждём подтверждение выхода (задача даёт doneSem_ ПЕРЕД удалением
+        // себя во всех путях run()). Успех → задача завершается сама через
+        // vTaskDelete(nullptr): её хэндл трогать нельзя, только забыть.
+        // «Задача уже сама вышла до stop()» тоже попадает сюда: бинарный
+        // семафор хранит состояние Give — take вернёт pdTRUE мгновенно,
+        // и ресурсы освободятся (раньше здесь была утечка doneSem_).
+        if (xSemaphoreTake(doneSem_, 2000 / portTICK_PERIOD_MS) == pdTRUE) {
+            task_ = nullptr;
+        } else if (xSemaphoreTake(doneSem_, 100 / portTICK_PERIOD_MS) == pdTRUE) {
+            // Сужаем гонку «Give пришёл ровно на границе таймаута»: короткий
+            // повторный take — и хэндл задачи остаётся нетронутым.
+            task_ = nullptr;
+        } else {
+            // Задача зависла (Give не пришёл → она жива): принудительно
+            // удаляем. После vTaskDelete задача больше не исполняется,
+            // поэтому удаление семафора ниже безопасно (никакого UAF).
+            ESP_LOGE(TAG_DNS, "dns task did not stop in time, forcing delete");
+            vTaskDelete(task_);
+            task_ = nullptr;
+        }
     }
 
     if (doneSem_) {

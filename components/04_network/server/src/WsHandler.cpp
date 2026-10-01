@@ -3,6 +3,7 @@
 #include "esp_heap_caps.h"
 #include <cstring>
 #include <cstdlib>
+#include <memory>
 
 static const char *TAG = "WsHandler";
 static portMUX_TYPE ws_mux = portMUX_INITIALIZER_UNLOCKED;
@@ -196,7 +197,10 @@ esp_err_t WsHandler::ws_handler(httpd_req_t *req) {
       ws_pkt.type == HTTPD_WS_TYPE_CLOSE) {
 
     // Сначала считываем payload (если есть)
-    uint8_t *payload = nullptr;
+    // unique_ptr с deleter free: буфер освобождается на любом пути выхода
+    // (раньше — ручной free перед каждым return: пропуск = утечка до 125 Б
+    // на каждый кадр).
+    std::unique_ptr<uint8_t, decltype(&std::free)> payload(nullptr, &std::free);
     if (ws_pkt.len > 0) {
       // Лимит до malloc: RFC 6455 §5.5 ограничивает control frame 125 Б,
       // но снаружи это не проверяется — защита от OOM на огромной
@@ -205,13 +209,12 @@ esp_err_t WsHandler::ws_handler(httpd_req_t *req) {
         ESP_LOGW(TAG, "Control frame too large: %u, dropping", ws_pkt.len);
         return ESP_ERR_INVALID_SIZE;
       }
-      payload = (uint8_t *)malloc(ws_pkt.len);
+      payload.reset(static_cast<uint8_t*>(std::malloc(ws_pkt.len)));
       if (payload) {
-        ws_pkt.payload = payload;
+        ws_pkt.payload = payload.get();
         esp_err_t err = httpd_ws_recv_frame(req, &ws_pkt, ws_pkt.len);
         if (err != ESP_OK) {
           ESP_LOGW(TAG, "Failed to read PING/PONG payload");
-          free(payload);
           return err;
         }
       }
@@ -230,7 +233,7 @@ esp_err_t WsHandler::ws_handler(httpd_req_t *req) {
       httpd_ws_frame_t pong = {};
       pong.type = HTTPD_WS_TYPE_PONG;
       pong.len = ws_pkt.len;
-      pong.payload = payload; // тот же payload, что и в PING
+      pong.payload = payload.get(); // тот же payload, что и в PING
       esp_err_t err = httpd_ws_send_frame(req, &pong);
       if (err != ESP_OK) {
         ESP_LOGW(TAG, "Failed to send PONG");
@@ -243,12 +246,7 @@ esp_err_t WsHandler::ws_handler(httpd_req_t *req) {
       self->remove_client(sockfd);
     }
 
-    // Считывается на каждом PING/PONG/CLOSE-фрейме: освобождаем, чтобы не
-    // утекало до 125 байт на каждый кадр.
-    if (payload) {
-      free(payload);
-    }
-
+    // Освобождение payload — автоматически (unique_ptr) при выходе из блока.
     return ESP_OK;
   }
 
@@ -264,8 +262,12 @@ esp_err_t WsHandler::ws_handler(httpd_req_t *req) {
     return ESP_ERR_INVALID_SIZE;
   }
 
+  // malloc + unique_ptr с deleter free: выравнивание max_align_t под
+  // ws_message_t (flexible array) + освобождение на всех путях выхода
+  // (раньше — ручной free, один пропущенный = утечка).
   size_t totalSize = sizeof(ws_message_t) + ws_pkt.len;
-  ws_message_t *msg = (ws_message_t *)malloc(totalSize);
+  std::unique_ptr<ws_message_t, decltype(&std::free)> msg(
+      static_cast<ws_message_t*>(std::malloc(totalSize)), &std::free);
   if (!msg) {
     ESP_LOGE(TAG, "Failed to allocate ws_message_t");
     return ESP_ERR_NO_MEM;
@@ -278,14 +280,14 @@ esp_err_t WsHandler::ws_handler(httpd_req_t *req) {
   ret = httpd_ws_recv_frame(req, &ws_pkt, ws_pkt.len);
   if (ret != ESP_OK) {
     ESP_LOGE(TAG, "Failed to receive frame data: %s", esp_err_to_name(ret));
-    free(msg);
     self->remove_client(sockfd);
     return ret;
   }
 
   self->ctx_->events.postSized(APP_EVENTS_BASE, app_event_id_t::WS_MESSAGE_RECEIVED,
-                               msg, totalSize);
-  free(msg); // ← payload копируется event loop'ом, поэтому здесь можно освобождать
+                               msg.get(), totalSize);
+  // ← payload копируется event loop'ом, здесь буфер уже не нужен;
+  // освободит unique_ptr (и на раннем return выше — тоже).
   return ESP_OK;
 }
 

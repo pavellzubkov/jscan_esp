@@ -6,6 +6,7 @@
 #include "esp_log.h"
 #include <cstdlib>
 #include <cstring>
+#include <memory>
 
 namespace {
 const char* TAG = "j1939_sys";
@@ -412,8 +413,12 @@ void J1939System::sendSnapshot(uint32_t nowMs)
         return;
 
     const size_t evSize = sizeof(j1939_snapshot_t) + payloadLen;
-    j1939_snapshot_t* snap =
-        static_cast<j1939_snapshot_t*>(malloc(evSize));
+    // malloc + unique_ptr с deleter free: батч (до ~8 КБ) на стек задачи
+    // (6144) не влезает, а RAII освобождает буфер на всех путях выхода
+    // (раньше — ручной free только на успешном пути; ранний return ниже
+    // был бы утечкой). Выравнивание max_align_t — под flexible array.
+    std::unique_ptr<j1939_snapshot_t, decltype(&std::free)> snap(
+        static_cast<j1939_snapshot_t*>(std::malloc(evSize)), &std::free);
     if (!snap)
         return;
 
@@ -422,6 +427,7 @@ void J1939System::sendSnapshot(uint32_t nowMs)
 
     ctx_->events.postSized(APP_EVENTS_BASE,
                            app_event_id_t::J1939_SNAPSHOT_SEND,
-                           snap, evSize);
-    free(snap);
+                           snap.get(), evSize);
+    // postSized скопировал данные в очередь event loop'а → буфер здесь
+    // больше не нужен; освободит unique_ptr.
 }

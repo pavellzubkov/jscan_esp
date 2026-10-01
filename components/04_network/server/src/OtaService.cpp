@@ -11,6 +11,8 @@
 #include <atomic>
 #include <cstdio>
 #include <cstring>
+#include <cstdlib>
+#include <memory>
 
 static const char* TAG = "OtaService";
 
@@ -90,7 +92,10 @@ esp_err_t OtaService::recvToCallback(httpd_req_t* req, size_t expected,
                                      void* cb_arg, std::atomic<size_t>* received) {
     // Буфер на куче, а не на стеке: задача httpd имеет стек 16384 байт, но
     // kBufSize=8192 + остальные фреймы — лучше не рисковать стеком.
-    char* buf = (char*)malloc(kBufSize);
+    // unique_ptr с deleter free: четыре ручных free на error-path'ах заменены
+    // одним освобождением на любом выходе (RAII).
+    std::unique_ptr<char, decltype(&std::free)> buf(
+        static_cast<char*>(std::malloc(kBufSize)), &std::free);
     if (!buf) {
         ESP_LOGE(TAG, "OOM: cannot allocate recv buffer");
         return ESP_ERR_NO_MEM;
@@ -98,29 +103,25 @@ esp_err_t OtaService::recvToCallback(httpd_req_t* req, size_t expected,
     size_t remaining = expected;
 
     while (remaining > 0) {
-        int len = httpd_req_recv(req, buf, remaining < kBufSize ? remaining : kBufSize);
+        int len = httpd_req_recv(req, buf.get(), remaining < kBufSize ? remaining : kBufSize);
         if (len < 0) {
             if (len == HTTPD_SOCK_ERR_TIMEOUT) {
                 continue; // медленный клиент — ждём следующий фрагмент
             }
             ESP_LOGE(TAG, "recv error: %d", len);
-            free(buf);
             return ESP_FAIL;
         }
         if (len == 0) {
             ESP_LOGE(TAG, "connection closed by peer");
-            free(buf);
             return ESP_FAIL;
         }
-        if (!cb(cb_arg, reinterpret_cast<const uint8_t*>(buf), (size_t)len)) {
+        if (!cb(cb_arg, reinterpret_cast<const uint8_t*>(buf.get()), (size_t)len)) {
             ESP_LOGE(TAG, "write callback failed");
-            free(buf);
             return ESP_FAIL;
         }
         *received += (size_t)len;
         remaining -= (size_t)len;
     }
-    free(buf);
     return ESP_OK;
 }
 

@@ -66,7 +66,7 @@ esp_err_t ServerModule::begin() {
         return ret;
     }
 
-    ws_ = new WsHandler(ctx_);
+    ws_ = std::make_unique<WsHandler>(ctx_);
     ret = ws_->reg(server_);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to register WS handler: %s",
@@ -75,7 +75,11 @@ esp_err_t ServerModule::begin() {
         return ret;
     }
 
-    ret = reg_static_handler(server_, &staticCtx_);
+    // reg_static_handler владение отдаёт через out-параметр → берём в
+    // unique_ptr (при ошибке хендлер сам delete'ит контекст, out = nullptr).
+    static_ctx_t* staticCtxRaw = nullptr;
+    ret = reg_static_handler(server_, &staticCtxRaw);
+    staticCtx_.reset(staticCtxRaw);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to register static handler: %s",
                  esp_err_to_name(ret));
@@ -98,11 +102,9 @@ void ServerModule::stop() {
     }
     if (ws_) {
         ws_->unreg();
-        delete ws_;
-        ws_ = nullptr;
+        ws_.reset();      // unique_ptr удаляет WsHandler
     }
     // Контекст статики (~4 КБ со scratch) — строго после httpd_stop:
     // wildcard-хендлер /* больше не вызывается.
-    delete staticCtx_;
-    staticCtx_ = nullptr;
+    staticCtx_.reset();
 }

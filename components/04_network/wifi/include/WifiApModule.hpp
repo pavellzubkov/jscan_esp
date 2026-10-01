@@ -4,6 +4,7 @@
 #include "esp_wifi.h"
 #include "esp_netif.h"
 #include <cstdint>
+#include <memory>
 
 class DnsServer;
 
@@ -27,8 +28,13 @@ public:
 private:
     AppContext* ctx_;
     esp_netif_t* netif_ = nullptr;
-    DnsServer* dns_ = nullptr;
-    bool started_ = false;
+    // unique_ptr: владение DNS-сервером (captive portal) с авто-удалением;
+    // порядок остановки задаёт stop()/restartDns (сначала dns_->stop()).
+    // ~WifiApModule объявлен в hpp и определён в .cpp, где DnsServer
+    // полный тип — удаление объекта через unique_ptr безопасно.
+    std::unique_ptr<DnsServer> dns_;
+    bool started_ = false;     // esp_wifi_start() выполнен (AP поднят)
+    bool wifiInited_ = false;  // esp_wifi_init() выполнен → нужен esp_wifi_deinit
 
     // Дебаунс live-apply: одноразовый таймер, по истечении которого в шину
     // постится WIFI_REAPPLY (сам таймер работает в esp_timer task и не трогает

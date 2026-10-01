@@ -1,5 +1,6 @@
 #include "TwaiDriver.h"
 
+#include "RaiiGuards.h"
 #include "esp_log.h"
 #include "esp_twai.h"
 #include "esp_twai_onchip.h"
@@ -201,11 +202,8 @@ esp_err_t TwaiDriver::transmit(uint32_t id, const uint8_t* data, uint8_t dlc,
         return ESP_ERR_INVALID_STATE;
 
     // RAII-гарантия возврата мьютекса на всех путях возврата
-    struct TxLock {
-        SemaphoreHandle_t m;
-        explicit TxLock(SemaphoreHandle_t s) : m(s) { xSemaphoreTake(m, portMAX_DELAY); }
-        ~TxLock() { xSemaphoreGive(m); }
-    } lock(txMux_);
+    // (общий примитив из RaiiGuards.h — как и прежний локальный TxLock)
+    LockGuard lock(txMux_);
 
     // Узел простаивает → ни один TX-блок больше не нужен драйверу
     if (twai_node_transmit_wait_all_done(node_, 0) == ESP_OK)

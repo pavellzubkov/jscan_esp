@@ -38,6 +38,15 @@ public:
     esp_err_t begin(const Config& cfg);
     void      end();
 
+    // RAII: узел/очереди/мьютекс/пулы освобождаются автоматически.
+    // end() идемпотентен (cleanupPartial зануляет хэндлы), поэтому вызов
+    // и из dtor, и вручную безопасен. Копирование запрещено: за узлом и
+    // ISR-очередями стоит владение одним ресурсом.
+    TwaiDriver() = default;
+    ~TwaiDriver() { end(); }
+    TwaiDriver(const TwaiDriver&) = delete;
+    TwaiDriver& operator=(const TwaiDriver&) = delete;
+
     // Заполняет Status текущим состоянием узла через twai_node_get_info.
     // Возвращает false, если узел не создан (begin не вызывался).
     bool getStatus(Status& out) const;

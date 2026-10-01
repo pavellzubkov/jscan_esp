@@ -36,11 +36,7 @@ void SnapshotAccumulator::storeData(Record& r, const uint8_t* data, size_t len)
 {
     if (len <= sizeof(r.smallData))
     {
-        if (r.bigData)
-        {
-            free(r.bigData);
-            r.bigData = nullptr;
-        }
+        r.freeBig();   // короткое сообщение → освободить TP-буфер, если был
         memcpy(r.smallData, data, len);
         r.len = static_cast<uint16_t>(len);
         return;
@@ -77,14 +73,11 @@ void SnapshotAccumulator::update(uint32_t sa, uint32_t pgn,
         idx = findFreeOrOldest(nowMs);
         if (idx == kMaxRecords)
             return;
-        // Вытесняем запись — освобождаем её длинный буфер
+        // Вытесняем запись: присваивание пустого Record освобождает её
+        // bigData и обнуляет слот (RAII вместо ручного free).
         Record& victim = records_[idx];
         const bool wasValid = victim.valid;
-        if (wasValid && victim.bigData)
-        {
-            free(victim.bigData);
-            victim.bigData = nullptr;
-        }
+        victim = Record{};
         victim.pgn = pgn;
         victim.sa = static_cast<uint8_t>(sa);
         victim.lastTsMs = 0;
@@ -118,24 +111,17 @@ size_t SnapshotAccumulator::collect(const Record*& out, uint32_t nowMs,
         // висит до вытеснения, count_ завышает activePgns).
         if ((nowMs - r.lastTsMs) > ttlMs)
         {
-            if (r.bigData)
-            {
-                free(r.bigData);
-                r.bigData = nullptr;
-            }
-            r.valid = false;
+            r.reset();   // free(bigData) + valid=false — инкапсулировано в Record
             if (count_ > 0)
                 --count_;
             continue;
         }
         if (n != i)
         {
-            // Уплотняем: переносим владение bigData в слот n, исходный
-            // слот освобождаем (иначе два слота с общим указателем →
-            // double-free/UAF при вытеснении).
-            records_[n] = r;
-            records_[i].bigData = nullptr;
-            records_[i].valid = false;
+            // Уплотняем: move-перенос владения bigData в слот n, исходный
+            // слот обнуляется (двойного владения нет → double-free невозможен).
+            records_[n] = std::move(r);
+            records_[i].reset();
         }
         ++n;
     }
