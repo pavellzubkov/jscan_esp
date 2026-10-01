@@ -6,68 +6,81 @@
 #include <memory>
 
 static const char *TAG = "WsHandler";
-static portMUX_TYPE ws_mux = portMUX_INITIALIZER_UNLOCKED;
 
 WsHandler::WsHandler(AppContext* ctx)
-    : ctx_(ctx), server_(nullptr), client_count_(0)
+    : ctx_(ctx), client_count_(0)
 {
     memset(connected_clients_, 0, sizeof(connected_clients_));
 }
 
 WsHandler::~WsHandler() {
+    // Сначала гасим sender-задачу (она могла бы работать с умирающим
+    // объектом: remove_client -> пост события).
+    stopTx();
     // Подписка делается в reg(); delete без снятия (stop() при ошибке
     // ServerModule::begin) оставил бы обработчик на удалённый объект → UAF.
     ctx_->events.unsubscribe(this);
+    // Дренаж не отправленных items + удаление ресурсов очереди.
+    if (txQueue_) {
+        WsTxItem* item = nullptr;
+        while (xQueueReceive(txQueue_, &item, 0) == pdTRUE) {
+            std::free(item);
+        }
+        vQueueDelete(txQueue_);
+        txQueue_ = nullptr;
+    }
+    if (senderDoneSem_) {
+        vSemaphoreDelete(senderDoneSem_);
+        senderDoneSem_ = nullptr;
+    }
 }
 
 void WsHandler::add_client(int sockfd) {
   bool already_connected = false;
-  int old_index = -1;
+  bool rejected_full = false;
+  int new_count = 0;
 
-  taskENTER_CRITICAL(&ws_mux);
+  {
+    std::lock_guard<std::mutex> lock(clientMux_);
 
-  // Проверяем, есть ли уже такой клиент
-  for (int i = 0; i < client_count_; i++) {
-    if (connected_clients_[i] == sockfd) {
-      already_connected = true;
-      old_index = i;
-      break;
+    // Проверяем, есть ли уже такой клиент; при повторе — удаляем старую
+    // запись, чтобы добавить актуальную (замена соединения).
+    for (int i = 0; i < client_count_; i++) {
+      if (connected_clients_[i] == sockfd) {
+        already_connected = true;
+        for (int j = i; j < client_count_ - 1; j++) {
+          connected_clients_[j] = connected_clients_[j + 1];
+        }
+        client_count_--;
+        break;
+      }
+    }
+
+    if (client_count_ >= kMaxClients) {
+      rejected_full = true;
+    } else {
+      connected_clients_[client_count_++] = sockfd;
+      new_count = client_count_;
     }
   }
 
-  if (already_connected) {
-    // Удаляем старую запись
-    for (int j = old_index; j < client_count_ - 1; j++) {
-      connected_clients_[j] = connected_clients_[j + 1];
-    }
-    client_count_--;
-  }
-
-  if (client_count_ >= kMaxClients) {
-    int rejected = sockfd;
-    bool was_connected = already_connected;
-    taskEXIT_CRITICAL(&ws_mux);
-    // Логирование — ВНЕ критической секции!
-    ESP_LOGW(TAG, "Max clients reached, rejecting sockfd: %d", rejected);
+  // Логирование и посты — ВНЕ мьютекса clientMux_.
+  if (rejected_full) {
+    ESP_LOGW(TAG, "Max clients reached, rejecting sockfd: %d", sockfd);
     // Запись этого sockfd уже была удалена выше — без DISCONNECTED
     // счётчики аудитории (J1939Channel) уехали бы вверх.
-    if (was_connected) {
+    if (already_connected) {
       ws_message_t dmsg = {};
-      dmsg.sockfd = rejected;
+      dmsg.sockfd = sockfd;
       postEvent<app_event_id_t::WS_CLIENT_DISCONNECTED>(ctx_->events, dmsg);
     }
     // Закрываем сокет, чтобы клиент не висел подключённым без доставки данных.
     if (server_) {
-      httpd_sess_trigger_close(server_, rejected);
+      httpd_sess_trigger_close(server_, sockfd);
     }
     return;
   }
 
-  connected_clients_[client_count_++] = sockfd;
-  int new_count = client_count_; // сохраним для лога
-  taskEXIT_CRITICAL(&ws_mux);
-
-  // ВСЁ логирование — только здесь, вне критической секции
   if (already_connected) {
     ESP_LOGW(TAG, "Client %d already connected — replaced", sockfd);
   }
@@ -89,22 +102,24 @@ void WsHandler::remove_client(int sockfd) {
   bool removed = false;
   int count_for_log = 0;
 
-  taskENTER_CRITICAL(&ws_mux);
-  for (int i = 0; i < client_count_; i++) {
-    if (connected_clients_[i] == sockfd) {
-      for (int j = i; j < client_count_ - 1; j++) {
-        connected_clients_[j] = connected_clients_[j + 1];
+  {
+    std::lock_guard<std::mutex> lock(clientMux_);
+    for (int i = 0; i < client_count_; i++) {
+      if (connected_clients_[i] == sockfd) {
+        for (int j = i; j < client_count_ - 1; j++) {
+          connected_clients_[j] = connected_clients_[j + 1];
+        }
+        client_count_--;
+        connected_clients_[client_count_] = 0;
+        removed = true;
+        break;
       }
-      client_count_--;
-      connected_clients_[client_count_] = 0;
-      removed = true;
-      break;
     }
+    count_for_log = client_count_;
   }
-  count_for_log = client_count_; // читаем внутри критической секции
-  taskEXIT_CRITICAL(&ws_mux);
 
   if (removed) {
+    // Лог/пост — вне мьютекса.
     ESP_LOGI(TAG, "Client %d removed, total: %d (free heap: %u B)", sockfd,
              count_for_log, (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT));
 
@@ -118,16 +133,17 @@ void WsHandler::cleanup_clients() {
   int removed[kMaxClients];
   int old_count = 0;
 
-  taskENTER_CRITICAL(&ws_mux);
-  old_count = client_count_;
-  for (int i = 0; i < old_count; i++) {
-    removed[i] = connected_clients_[i];
+  {
+    std::lock_guard<std::mutex> lock(clientMux_);
+    old_count = client_count_;
+    for (int i = 0; i < old_count; i++) {
+      removed[i] = connected_clients_[i];
+    }
+    client_count_ = 0;
+    memset(connected_clients_, 0, sizeof(connected_clients_));
   }
-  client_count_ = 0;
-  memset(connected_clients_, 0, sizeof(connected_clients_));
-  taskEXIT_CRITICAL(&ws_mux);
 
-  // Логирование — ВНЕ критической секции.
+  // Логирование и посты — ВНЕ мьютекса.
   if (old_count > 0) {
     ESP_LOGI(TAG, "Cleaned up %d client(s)", old_count);
     // Пара к каждому WS_CLIENT_CONNECTED: без DISCONNECTED счётчики
@@ -291,72 +307,202 @@ esp_err_t WsHandler::ws_handler(httpd_req_t *req) {
   return ESP_OK;
 }
 
+// --- Путь отправки: event-loop -> очередь -> sender-задача ---------------
+
 void WsHandler::onWsMessageSend(const ws_message_t *msg) {
-  if (!server_ || !msg) {
+  // Колбэк event-loop задачи. НЕ отправляем здесь: httpd_ws_send_frame_async
+  // на самом деле синхронный (send с SO_SNDTIMEO=5 с) — медленный/мёртвый
+  // клиент блокировал бы шину событий до 5 с на кадр. Вместо этого —
+  // своя копия сообщения в очередь sender-задачи (payload события после
+  // возврата из колбэка принадлежит event-loop'у — копия обязательна).
+  if (!server_ || !msg || !txQueue_) {
+    return;
+  }
+  if (msg->length == 0 || msg->length > kMaxWsMessageLen) {
+    ESP_LOGW(TAG, "Bad WS tx length %u, dropping", (unsigned)msg->length);
+    txDrops_.fetch_add(1, std::memory_order_relaxed);
     return;
   }
 
-  if (msg->sockfd == -1) {
-    send_to_all_clients(msg->data, msg->length);
+  WsTxItem* item = makeTxItem(msg);
+  if (!item) {
+    txDrops_.fetch_add(1, std::memory_order_relaxed);
+    ESP_LOGE(TAG, "OOM for WS tx item (%u B)", (unsigned)msg->length);
+    return;
+  }
+
+  if (xQueueSend(txQueue_, &item, 0) != pdTRUE) {
+    std::free(item);
+    uint32_t n = txDrops_.fetch_add(1, std::memory_order_relaxed) + 1;
+    // Rate-limit: первый дроп и каждый 10-й дальше.
+    if (n == 1 || (n % 10) == 0) {
+      ESP_LOGW(TAG, "WS tx queue full, item dropped (total drops=%u)",
+               (unsigned)n);
+    }
+  }
+}
+
+WsHandler::WsTxItem* WsHandler::makeTxItem(const ws_message_t* msg) {
+  auto* item = static_cast<WsTxItem*>(std::malloc(sizeof(WsTxItem) + msg->length));
+  if (!item) {
+    return nullptr;
+  }
+  item->sockfd = msg->sockfd;
+  item->len = msg->length;
+  std::memcpy(item->data, msg->data, msg->length);
+  return item;
+}
+
+void WsHandler::senderTrampoline(void* arg) {
+  static_cast<WsHandler*>(arg)->senderLoop();
+}
+
+void WsHandler::senderLoop() {
+  for (;;) {
+    WsTxItem* item = nullptr;
+    // Таймаут цикла — способ заметить senderStop_, когда очередь пуста:
+    // в отличие от DnsServer (закрытие сокета будит recvfrom) очередь
+    // будить нечем.
+    if (xQueueReceive(txQueue_, &item, pdMS_TO_TICKS(100)) != pdTRUE) {
+      if (senderStop_.load(std::memory_order_acquire)) {
+        break;
+      }
+      continue;
+    }
+    if (!item) {
+      continue;
+    }
+    deliverItem(item);
+    std::free(item);
+  }
+  // Подтверждение стопперу ПЕРЕД self-delete (паттерн DnsServer::stop):
+  // stopTx() ждёт семафор, после чего хэндл задачи трогать нельзя.
+  if (senderDoneSem_) {
+    xSemaphoreGive(senderDoneSem_);
+  }
+  vTaskDelete(nullptr);
+}
+
+void WsHandler::deliverItem(const WsTxItem* item) {
+  httpd_handle_t server = server_.load();
+  if (!server) {
+    return;
+  }
+
+  if (item->sockfd == -1) {
+    send_to_all_clients(reinterpret_cast<const char*>(item->data), item->len);
     return;
   }
 
   httpd_ws_frame_t ws_pkt = {};
-  ws_pkt.payload = (uint8_t *)msg->data;
-  ws_pkt.len = msg->length;
+  ws_pkt.payload = const_cast<uint8_t*>(item->data);
+  ws_pkt.len = item->len;
   ws_pkt.type = HTTPD_WS_TYPE_BINARY;
-
-  esp_err_t ret = httpd_ws_send_frame_async(server_, msg->sockfd, &ws_pkt);
-  if (ret != ESP_OK) {
-    ESP_LOGW(TAG, "Failed to send to client %d: %s", msg->sockfd,
-             esp_err_to_name(ret));
-    remove_client(msg->sockfd);
-  }
+  sendToSock(server, item->sockfd, &ws_pkt);
 }
 
 void WsHandler::send_to_all_clients(const char *data, size_t len) {
-  if (!server_) {
+  httpd_handle_t server = server_.load();
+  if (!server) {
     return;
   }
 
-  // 1. Делаем локальную копию списка сокетов — БЕЗ критической секции во время
-  // отправки
+  // 1. Локальная копия списка сокетов под мьютексом...
   int local_clients[kMaxClients];
   int local_count = 0;
-
-  taskENTER_CRITICAL(&ws_mux);
-  local_count = client_count_;
-  for (int i = 0; i < local_count; i++) {
-    local_clients[i] = connected_clients_[i];
+  {
+    std::lock_guard<std::mutex> lock(clientMux_);
+    local_count = client_count_;
+    for (int i = 0; i < local_count; i++) {
+      local_clients[i] = connected_clients_[i];
+    }
   }
-  taskEXIT_CRITICAL(&ws_mux);
 
-  // 2. Отправляем ВНЕ критической секции
+  // 2. ...отправка ВНЕ мьютекса (send может блокироваться до SO_SNDTIMEO).
   httpd_ws_frame_t ws_pkt = {};
   ws_pkt.payload = (uint8_t *)data;
   ws_pkt.len = len;
   ws_pkt.type = HTTPD_WS_TYPE_BINARY;
 
   for (int i = 0; i < local_count; i++) {
-    int sockfd = local_clients[i];
-    if (sockfd <= 0)
-      continue;
-
-    esp_err_t ret = httpd_ws_send_frame_async(server_, sockfd, &ws_pkt);
-    if (ret != ESP_OK) {
-      ESP_LOGW(TAG, "Failed to send to client %d: %s", sockfd,
-               esp_err_to_name(ret));
-      // Удаляем клиента — функция remove_client() сама защищена мьютексом
-      remove_client(sockfd);
-    }
+    sendToSock(server, local_clients[i], &ws_pkt);
   }
+}
+
+void WsHandler::sendToSock(httpd_handle_t server, int sockfd,
+                           httpd_ws_frame_t* pkt) {
+  if (sockfd <= 0) {
+    return;
+  }
+  esp_err_t ret = httpd_ws_send_frame_async(server, sockfd, pkt);
+  if (ret != ESP_OK) {
+    ESP_LOGW(TAG, "Failed to send to client %d: %s", sockfd,
+             esp_err_to_name(ret));
+    // remove_client сам берёт clientMux_ — вызов вне мьютекса.
+    remove_client(sockfd);
+  } else {
+    txSent_.fetch_add(1, std::memory_order_relaxed);
+  }
+}
+
+// --- Жизненный цикл -------------------------------------------------------
+
+void WsHandler::stopTx() {
+  if (!senderTask_) {
+    return;
+  }
+  senderStop_.store(true, std::memory_order_release);
+
+  // Задача даёт семафор перед vTaskDelete(nullptr); таймаут больше
+  // SO_SNDTIMEO (5 с), чтобы не удалить задачу внутри send. Сужаем гонку
+  // «Give пришёл ровно на границе таймаута» коротким повторным take.
+  if (xSemaphoreTake(senderDoneSem_, kSenderStopTimeoutMs / portTICK_PERIOD_MS) == pdTRUE ||
+      xSemaphoreTake(senderDoneSem_, 100 / portTICK_PERIOD_MS) == pdTRUE) {
+    senderTask_ = nullptr;
+  } else {
+    // Задача зависла (в send на мёртвом клиенте и т.п.): принудительно.
+    ESP_LOGE(TAG, "ws sender did not stop in time, forcing delete");
+    vTaskDelete(senderTask_);
+    senderTask_ = nullptr;
+  }
+  // Готовность к повторному запуску в reg().
+  senderStop_.store(false, std::memory_order_release);
 }
 
 esp_err_t WsHandler::reg(httpd_handle_t server) {
   server_ = server;
 
-  client_count_ = 0;
-  memset(connected_clients_, 0, sizeof(connected_clients_));
+  {
+    std::lock_guard<std::mutex> lock(clientMux_);
+    client_count_ = 0;
+    memset(connected_clients_, 0, sizeof(connected_clients_));
+  }
+
+  // Очередь и sender-задача — до подписки (иначе первые события упадут в
+  // отсутствие очереди). Идемпотентно: reg() может повторяться.
+  if (!txQueue_) {
+    txQueue_ = xQueueCreate(kTxQueueDepth, sizeof(WsTxItem*));
+    if (!txQueue_) {
+      ESP_LOGE(TAG, "Failed to allocate WS tx queue");
+      return ESP_ERR_NO_MEM;
+    }
+  }
+  if (!senderDoneSem_) {
+    senderDoneSem_ = xSemaphoreCreateBinary();
+    if (!senderDoneSem_) {
+      ESP_LOGE(TAG, "Failed to allocate WS sender semaphore");
+      return ESP_ERR_NO_MEM;
+    }
+  }
+  if (!senderTask_) {
+    senderStop_.store(false, std::memory_order_release);
+    if (xTaskCreate(senderTrampoline, "ws_tx", kSenderTaskStack, this,
+                    5, &senderTask_) != pdPASS) {
+      senderTask_ = nullptr;
+      ESP_LOGE(TAG, "Failed to create WS sender task");
+      return ESP_ERR_NO_MEM;
+    }
+  }
 
   // Единая точка подписки через EventManager. Подписываемся один раз за время
   // жизни объекта: при рестарте httpd (NetworkController) reg() вызывается
@@ -385,7 +531,11 @@ esp_err_t WsHandler::reg(httpd_handle_t server) {
 }
 
 void WsHandler::unreg() {
-  ESP_LOGI(TAG, "Unregistering WebSocket handler");
+  ESP_LOGI(TAG, "Unregistering WebSocket handler (tx sent=%u, drops=%u)",
+           (unsigned)txSent_.load(), (unsigned)txDrops_.load());
+  // Порядок: сначала sender (он держит server_ и может дёргать
+  // remove_client), потом снос клиентов, потом server_ = nullptr.
+  stopTx();
   cleanup_clients();
   server_ = nullptr;
 }

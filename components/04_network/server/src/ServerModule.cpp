@@ -34,6 +34,13 @@ esp_err_t ServerModule::begin() {
     config.stack_size = 16384;
     config.max_uri_handlers = 32;
     config.lru_purge_enable = true;
+    // TCP keepalive: без него (дефолт false) мёртвый клиент держит сессию
+    // httpd вечно. При kill/wifi-обрыве keepalive отвалит сокет за ~10+15 с,
+    // recv вернёт ошибку -> remove_client.
+    config.keep_alive_enable = true;
+    config.keep_alive_idle = 10;
+    config.keep_alive_interval = 5;
+    config.keep_alive_count = 3;
     config.uri_match_fn = httpd_uri_match_wildcard;
     config.global_user_ctx = ctx_;
 
@@ -95,6 +102,12 @@ void ServerModule::stop() {
     // Сначала полностью останавливаем httpd (завершает все задачи/сокеты),
     // затем удаляем контексты хендлеров. Иначе httpd-задачи могут вызывать
     // хендлеры с освобождённым user_ctx (UAF).
+    // Sender-задачу WS гасим ДО httpd_stop: она шлёт кадры в сокеты через
+    // httpd-обработчики, которые httpd_stop сейчас закроет (stopTx —
+    // идемпотентен, повторный вызов в unreg() безопасен).
+    if (ws_) {
+        ws_->stopTx();
+    }
     if (server_) {
         httpd_stop(server_);
         server_ = nullptr;

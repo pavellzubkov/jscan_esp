@@ -49,7 +49,7 @@ wsl -d Ubuntu-22.04 -- bash -lc "cd /mnt/e/Projects/Embedded/ESP32/J1939_scaner/
 | 5 | EventManager: compile-time типизация pub/sub | ☑ |
 | 6 | TWAI: счётчики потерь + дренаж + неблок. TX | ☑ |
 | 7 | Стек задачи J1939: 6144 -> 8192 + убрать массивы | ☑ |
-| 8 | WS: отправка из event-loop -> sender-задача | ☐ |
+| 8 | WS: отправка из event-loop -> sender-задача | ☑ |
 | 9 | Сеть: DNS/captive/netif крайние случаи | ☐ |
 | 10 | TP до полноценного (RTS/CTS/EOM) + host-тесты | ☐ |
 | 11 | Ресурсы и крайние случаи (AppData/длины/UID) | ☐ |
@@ -573,7 +573,7 @@ host-тесты не нужны (не входят).
 
 ---
 
-## Шаг 8. WS: отправка из event-loop -> sender-задача
+## Шаг 8. WS: отправка из event-loop -> sender-задача ✔
 
 **Цель.** Закрыть ревью 2.7 («отправка из event-loop может стопорить всю
 шину»): `WsHandler.cpp:309,345` — `httpd_ws_send_frame_async` из задачи
