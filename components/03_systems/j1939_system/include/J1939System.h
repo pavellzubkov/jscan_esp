@@ -1,12 +1,14 @@
 #pragma once
 #include "AppContext.h"
 #include "J1939Decoder.h"
+#include "J1939Proto.h"
 #include "J1939TransportProtocol.h"
 #include "SnapshotAccumulator.h"
 #include "TwaiDriver.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
+#include <array>
 
 // Координатор J1939: владеет драйвером TWAI, декодером, TP и аккумулятором.
 // Одна задача: приём кадров + публикация снапшотов по таймеру.
@@ -25,6 +27,14 @@ private:
     J1939TransportProtocol tp_;
     SnapshotAccumulator acc_;
     TaskHandle_t task_ = nullptr;
+
+    // Крупные рабочие буферы — члены класса, а не стек taskLoop (суммарно
+    // ~4.3 КБ: порядок сортировки 128 индексов = 512 Б, батч записей ~2 КБ,
+    // буфер сборки TP = 1785+ байт). Используются только из задачи J1939
+    // (она одна) — синхронизация не нужна. См. kTaskStackSize.
+    std::array<size_t, SnapshotAccumulator::kMaxRecords> snapOrder_{};
+    std::array<J1939Proto::BatchRecord, SnapshotAccumulator::kMaxRecords> snapBatch_{};
+    J1939AssembledMsg assembled_{};
 
     // Очередь RQST от клиентов (J1939_REQUEST): событие (event-loop) только
     // ставит запрос, TX с блокировкой до canTxTimeoutMs выполняется в taskLoop.

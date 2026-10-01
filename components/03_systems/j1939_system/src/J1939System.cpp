@@ -11,9 +11,10 @@
 namespace {
 const char* TAG = "j1939_sys";
 
-// Стек задачи: в taskLoop на стеке живут J1939AssembledMsg (1785 байт) и
-// массив J1939Proto::BatchRecord (до 2 КБ при kMaxRecords=128).
-constexpr uint16_t kTaskStackSize = 6144;
+// Стек задачи: крупные буферы (порядок/батч снапшота ≈2.5 КБ, буфер сборки
+// TP 1785 байт) вынесены в члены класса — на стеке только локальные мелочи,
+// фреймы вызовов и логи. 8192 — с запасом на фреймы/FreeRTOS/вложенность.
+constexpr uint16_t kTaskStackSize = 8192;
 constexpr uint8_t  kTaskPriority  = 8;
 constexpr uint8_t  kTaskCore      = 0;   // ядро 0 безопасно для ESP32 и ESP32-S3
 
@@ -298,6 +299,20 @@ void J1939System::taskLoop()
 
 void J1939System::updateTwaiStatus()
 {
+    // Страховочная сетка по стеку: uxTaskGetStackHighWaterMark — минимально
+    // свободный стек с момента старта. Вызывается раз в секунду (период
+    // телеметрии); < 1 КБ свободного — предупреждение (фреймы/логи могут не
+    // влезть), каждый раз в ESP_LOGD — для профилирования.
+    if (task_)
+    {
+        const UBaseType_t hwm = uxTaskGetStackHighWaterMark(task_);
+        if (hwm < 1024)
+            ESP_LOGW(TAG, "j1939 stack HWM: %u bytes free (task size %u)",
+                     unsigned(hwm), unsigned(kTaskStackSize));
+        else
+            ESP_LOGD(TAG, "j1939 stack HWM: %u bytes free", unsigned(hwm));
+    }
+
     // Публикация через updateField<T>(): AppDataLock удерживается только на
     // чтении+записи, PUSH (COMMUNICATION_SEND → post, до 50 мс) уходит ПОСЛЕ
     // снятия лока — писатели AppData не блокируются на отправке. Diff внутри
@@ -358,9 +373,11 @@ void J1939System::processFrame(const TwaiDriver::RxFrame& frame, uint32_t nowMs)
     }
     else if (m.pgn == Hw::kPgnTpDt)
     {
-        J1939AssembledMsg out = {};
-        if (tp_.onTpDt(m, out))
-            processAssembled(out, nowMs);
+        // Буфер сборки — член assembled_ (1785+ байт не держим на стеке):
+        // onTpDt заполняет его целиком перед возвратом true, переиспользование
+        // безопасно (задача одна).
+        if (tp_.onTpDt(m, assembled_))
+            processAssembled(assembled_, nowMs);
     }
     else
     {
@@ -394,28 +411,28 @@ void J1939System::sendSnapshot(uint32_t nowMs)
     // Порядок записей в батче — «свежие первыми»: сортируем индексы по
     // lastTsMs (убывание), чтобы при усечении терялись самые старые записи
     // (PROTOCOL §7). n ≤ kMaxRecords, сортировка вставками — без кучи.
-    size_t order[SnapshotAccumulator::kMaxRecords];
+    // Массивы — члены snapOrder_/snapBatch_ (~2.5 КБ не помещались на стеке
+    // задачи с запасом); используется только из taskLoop (задача одна).
     for (size_t i = 0; i < n; ++i)
-        order[i] = i;
+        snapOrder_[i] = i;
     for (size_t i = 1; i < n; ++i)
     {
-        const size_t key = order[i];
+        const size_t key = snapOrder_[i];
         size_t j = i;
-        while (j > 0 && recs[order[j - 1]].lastTsMs < recs[key].lastTsMs)
+        while (j > 0 && recs[snapOrder_[j - 1]].lastTsMs < recs[key].lastTsMs)
         {
-            order[j] = order[j - 1];
+            snapOrder_[j] = snapOrder_[j - 1];
             --j;
         }
-        order[j] = key;
+        snapOrder_[j] = key;
     }
 
     // Записи батча ссылаются на данные аккумулятора без копирования.
-    J1939Proto::BatchRecord batch[SnapshotAccumulator::kMaxRecords];
     size_t batchCount = 0;
     size_t payloadLen = 0;
     for (size_t k = 0; k < emitLimit; ++k)
     {
-        const SnapshotAccumulator::Record& r = recs[order[k]];
+        const SnapshotAccumulator::Record& r = recs[snapOrder_[k]];
         J1939Proto::BatchRecord b;
         b.sa = r.sa;
         b.pgn = r.pgn;
@@ -427,15 +444,15 @@ void J1939System::sendSnapshot(uint32_t nowMs)
         const size_t add = J1939Proto::batchPayloadSize(&b, 1);
         if (payloadLen + add > J1939Proto::kMaxBatchPayload)
             break;   // остальные (более старые) отбрасываем
-        batch[batchCount++] = b;
+        snapBatch_[batchCount++] = b;
         payloadLen += add;
     }
     if (batchCount == 0)
         return;
 
     const size_t evSize = sizeof(j1939_snapshot_t) + payloadLen;
-    // malloc + unique_ptr с deleter free: батч (до ~8 КБ) на стек задачи
-    // (6144) не влезает, а RAII освобождает буфер на всех путях выхода
+    // malloc + unique_ptr с deleter free: батч (до ~8 КБ) и так не на стеке,
+    // а RAII освобождает буфер на всех путях выхода
     // (раньше — ручной free только на успешном пути; ранний return ниже
     // был бы утечкой). Выравнивание max_align_t — под flexible array.
     std::unique_ptr<j1939_snapshot_t, decltype(&std::free)> snap(
@@ -444,7 +461,8 @@ void J1939System::sendSnapshot(uint32_t nowMs)
         return;
 
     snap->length = payloadLen;
-    J1939Proto::serializeBatch(snap->data, payloadLen, batch, batchCount);
+    J1939Proto::serializeBatch(snap->data, payloadLen,
+                               snapBatch_.data(), batchCount);
 
     postSizedEvent<app_event_id_t::J1939_SNAPSHOT_SEND>(
         ctx_->events, snap.get(), evSize);
