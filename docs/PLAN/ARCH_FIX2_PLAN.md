@@ -45,7 +45,7 @@ wsl -d Ubuntu-22.04 -- bash -lc "cd /mnt/e/Projects/Embedded/ESP32/J1939_scaner/
 | 1 | Протокол: `len` батча -> uint16 | ☑ |
 | 2 | Rollback OTA: mark после health-check | ☑ |
 | 3 | OTA: дедлайн приёма + staging storage | ☑ |
-| 4 | EventManager: mutex пула + счётчики дропов | ☐ |
+| 4 | EventManager: mutex пула + счётчики дропов | ☑ |
 | 5 | EventManager: compile-time типизация pub/sub | ☐ |
 | 6 | TWAI: счётчики потерь + дренаж + неблок. TX | ☐ |
 | 7 | Стек задачи J1939: 6144 -> 8192 + убрать массивы | ☐ |
@@ -271,7 +271,7 @@ continue` без общего дедлайна залипшего клиента
 
 ---
 
-## Шаг 4. EventManager: mutex пула подписок + счётчики дропов
+## Шаг 4. EventManager: mutex пула подписок + счётчики дропов ✔
 
 **Цель.** Закрыть ревью 2.4 (часть 1): пул подписок без синхронизации, дропы
 event-очереди только в лог, коды unregister игнорируются, нет статистики.

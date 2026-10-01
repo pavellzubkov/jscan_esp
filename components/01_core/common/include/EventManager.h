@@ -2,8 +2,10 @@
 #include "esp_event.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <mutex>
 #include <type_traits>
 
 // Намеренные касты между указателями на методы (обобщённое хранение в пуле).
@@ -56,7 +58,21 @@ private:
     Subscription subscriptions_[kMaxSubscriptions]{};  // value-init: inUse=false
     size_t subscriptionCount_ = 0;  // только для логов/статистики
 
+    // Лок на весь пул подписок. Захватывается на время каждого метода,
+    // трогающего пул (subscribe/unsubscribe/shutdown — lock_guard в начале
+    // метода). post()/postSized() в лок НЕ входят: они уже ограничены
+    // kPostTimeoutTicks. Рекурсивный вызов subscribe из обработчика под
+    // локом невозможен: подписки идут из main-задачи, обработчики выполняются
+    // в event-loop.
+    mutable std::mutex poolMux_;
+
+    // Статистика публикаций: доставлено / потеряно на полной очереди
+    // event-loop (ESP_ERR_TIMEOUT). Атомики — пост может идти из любых задач.
+    std::atomic<uint32_t> postedEvents_{0};
+    std::atomic<uint32_t> droppedEvents_{0};
+
     // Выделить первый свободный слот. nullptr, если пул полон.
+    // ВЫЗЫВАТЬ ТОЛЬКО ПОД poolMux_.
     Subscription* reserveSubscription() {
         for (size_t i = 0; i < kMaxSubscriptions; ++i) {
             Subscription* s = &subscriptions_[i];
@@ -74,6 +90,7 @@ private:
     }
 
     // Освободить слот (после unregister) — без сдвига элементов пула.
+    // ВЫЗЫВАТЬ ТОЛЬКО ПОД poolMux_.
     void releaseSubscription(Subscription* s) {
         s->inUse = false;
         s->instance = nullptr;
@@ -97,9 +114,12 @@ public:
         if (!event_loop_ || !obj || !method) return false;
         int32_t int_event_id = static_cast<int32_t>(event_id);
 
+        std::lock_guard<std::mutex> lock(poolMux_);
         Subscription* sub = reserveSubscription();
         if (!sub) {
-            ESP_LOGE(TAG, "Subscription pool exhausted");
+            ESP_LOGE(TAG, "Subscription pool exhausted (%u/%u)",
+                     static_cast<unsigned>(subscriptionCount_),
+                     static_cast<unsigned>(kMaxSubscriptions));
             return false;
         }
         sub->base = event_base;
@@ -136,9 +156,12 @@ public:
         if (!event_loop_ || !obj || !method) return false;
         int32_t int_event_id = static_cast<int32_t>(event_id);
 
+        std::lock_guard<std::mutex> lock(poolMux_);
         Subscription* sub = reserveSubscription();
         if (!sub) {
-            ESP_LOGE(TAG, "Subscription pool exhausted");
+            ESP_LOGE(TAG, "Subscription pool exhausted (%u/%u)",
+                     static_cast<unsigned>(subscriptionCount_),
+                     static_cast<unsigned>(kMaxSubscriptions));
             return false;
         }
         sub->base = event_base;
@@ -175,9 +198,12 @@ public:
                    esp_event_handler_t handler, void* arg = nullptr) {
         if (!event_loop_ || !handler) return false;
 
+        std::lock_guard<std::mutex> lock(poolMux_);
         Subscription* sub = reserveSubscription();
         if (!sub) {
-            ESP_LOGE(TAG, "Subscription pool exhausted");
+            ESP_LOGE(TAG, "Subscription pool exhausted (%u/%u)",
+                     static_cast<unsigned>(subscriptionCount_),
+                     static_cast<unsigned>(kMaxSubscriptions));
             return false;
         }
         sub->base = event_base;
@@ -206,9 +232,12 @@ public:
                                                   void* arg = nullptr) {
         if (!handler) return nullptr;
 
+        std::lock_guard<std::mutex> lock(poolMux_);
         Subscription* sub = reserveSubscription();
         if (!sub) {
-            ESP_LOGE(TAG, "Subscription pool exhausted");
+            ESP_LOGE(TAG, "Subscription pool exhausted (%u/%u)",
+                     static_cast<unsigned>(subscriptionCount_),
+                     static_cast<unsigned>(kMaxSubscriptions));
             return nullptr;
         }
         sub->base = event_base;
@@ -239,8 +268,9 @@ public:
             event_loop_, event_base, static_cast<int32_t>(event_id),
             nullptr, 0, kPostTimeoutTicks);
         if (err == ESP_ERR_TIMEOUT) {
-            ESP_LOGW(TAG, "Event queue full, dropped event %d",
-                     static_cast<int32_t>(event_id));
+            ESP_LOGW(TAG, "Event queue full, dropped event %d (total dropped=%u)",
+                     static_cast<int32_t>(event_id),
+                     droppedEvents_.fetch_add(1, std::memory_order_relaxed) + 1);
             return false;
         }
         if (err != ESP_OK) {
@@ -248,6 +278,7 @@ public:
                      static_cast<int32_t>(event_id), esp_err_to_name(err));
             return false;
         }
+        postedEvents_.fetch_add(1, std::memory_order_relaxed);
         return true;
     }
 
@@ -265,8 +296,9 @@ public:
             event_loop_, event_base, static_cast<int32_t>(event_id),
             static_cast<const void*>(&data), sizeof(DataType), kPostTimeoutTicks);
         if (err == ESP_ERR_TIMEOUT) {
-            ESP_LOGW(TAG, "Event queue full, dropped event %d",
-                     static_cast<int32_t>(event_id));
+            ESP_LOGW(TAG, "Event queue full, dropped event %d (total dropped=%u)",
+                     static_cast<int32_t>(event_id),
+                     droppedEvents_.fetch_add(1, std::memory_order_relaxed) + 1);
             return false;
         }
         if (err != ESP_OK) {
@@ -274,6 +306,7 @@ public:
                      static_cast<int32_t>(event_id), esp_err_to_name(err));
             return false;
         }
+        postedEvents_.fetch_add(1, std::memory_order_relaxed);
         return true;
     }
 
@@ -289,8 +322,9 @@ public:
                                           static_cast<int32_t>(event_id),
                                           data, size, kPostTimeoutTicks);
         if (err == ESP_ERR_TIMEOUT) {
-            ESP_LOGW(TAG, "Event queue full, dropped event %d",
-                     static_cast<int32_t>(event_id));
+            ESP_LOGW(TAG, "Event queue full, dropped event %d (total dropped=%u)",
+                     static_cast<int32_t>(event_id),
+                     droppedEvents_.fetch_add(1, std::memory_order_relaxed) + 1);
             return false;
         }
         if (err != ESP_OK) {
@@ -298,6 +332,7 @@ public:
                      event_id, esp_err_to_name(err));
             return false;
         }
+        postedEvents_.fetch_add(1, std::memory_order_relaxed);
         return true;
     }
 
@@ -307,16 +342,22 @@ public:
     // Слоты НЕ сдвигаются — только помечаются свободными (см. Subscription).
     void unsubscribe(void* obj) {
         if (!obj) return;
+        std::lock_guard<std::mutex> lock(poolMux_);
         for (size_t i = 0; i < kMaxSubscriptions; i++) {
             Subscription* s = &subscriptions_[i];
             if (!s->inUse || s->obj != obj) continue;
             if (s->instance) {
+                esp_err_t err;
                 if (s->loop) {
-                    esp_event_handler_instance_unregister_with(
+                    err = esp_event_handler_instance_unregister_with(
                         s->loop, s->base, s->id, s->instance);
                 } else {
-                    esp_event_handler_instance_unregister(s->base, s->id,
-                                                          s->instance);
+                    err = esp_event_handler_instance_unregister(s->base, s->id,
+                                                                s->instance);
+                }
+                if (err != ESP_OK) {
+                    ESP_LOGW(TAG, "unregister event %d failed: %s", s->id,
+                             esp_err_to_name(err));
                 }
             }
             releaseSubscription(s);
@@ -326,21 +367,39 @@ public:
     // Снять все подписки (идемпотентно). Вызывается из ~EventManager и из
     // ~AppContext ДО esp_event_loop_delete, чтобы не работать с удалённым loop.
     void shutdown() {
+        std::lock_guard<std::mutex> lock(poolMux_);
         for (size_t i = 0; i < kMaxSubscriptions; i++) {
             Subscription* s = &subscriptions_[i];
             if (!s->inUse) continue;
             if (s->instance) {
+                esp_err_t err;
                 if (s->loop) {
-                    esp_event_handler_instance_unregister_with(
+                    err = esp_event_handler_instance_unregister_with(
                         s->loop, s->base, s->id, s->instance);
                 } else {
-                    esp_event_handler_instance_unregister(s->base, s->id,
-                                                          s->instance);
+                    err = esp_event_handler_instance_unregister(s->base, s->id,
+                                                                s->instance);
+                }
+                if (err != ESP_OK) {
+                    ESP_LOGW(TAG, "unregister event %d failed: %s", s->id,
+                             esp_err_to_name(err));
                 }
             }
             releaseSubscription(s);
         }
         subscriptionCount_ = 0;
+    }
+
+    // --- Статистика (для диагностики/мониторинга) ------------------------
+    size_t subscriptionCount() const {
+        std::lock_guard<std::mutex> lock(poolMux_);
+        return subscriptionCount_;
+    }
+    uint32_t postedEvents() const {
+        return postedEvents_.load(std::memory_order_relaxed);
+    }
+    uint32_t droppedEvents() const {
+        return droppedEvents_.load(std::memory_order_relaxed);
     }
 
     ~EventManager() { shutdown(); }
