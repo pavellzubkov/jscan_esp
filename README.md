@@ -18,8 +18,12 @@ components/
                          AppEvents, EventManager, BootManager, SystemTiming,
                          HardwareConfig, AppConfig, J1939Proto (кадр+CRC16+батч)
   02_hardware/twai/    — «глупый» драйвер TWAI (без AppContext): узлы, ISR-слоты, transmit
-  03_systems/j1939_system/ — координатор: J1939Decoder, TP (BAM/DT), SnapshotAccumulator,
-                         J1939System (1 задача: rx + снапшот-таймер)
+  03_systems/j1939_system/ — универсальный J1939: J1939Decoder, TP-сессии
+                         (BAM/RTS/DT), J1939System (задача: rx + RQST/CTS/EOM);
+                         готовые PGN → очередь AppContext::j1939Msg
+  03_systems/j1939_scanner/ — модуль сканера над J1939: SnapshotAccumulator,
+                         J1939Scanner (задача: потребитель очереди + снапшоты,
+                         команды SCANNER_REQUEST → J1939_REQUEST)
   04_network/wifi/     — WifiApModule (softAP, публикует WIFI_STATUS)
   04_network/server/   — ServerModule + StaticHandler (LittleFS) + WsHandler (WS)
   04_network/communication/ — CommunicationModule: диспатч команд + канал
@@ -39,12 +43,15 @@ BootManager в порядке приоритетов:
 | `config` (ConfigStore) | 10 | true | конфиг нужен всем, монтирует LittleFS `config` |
 | `comm` (CommunicationModule) | 20 | false | протокол/кадры/команды |
 | `netctrl` (NetworkController) | 40 | false | владеет wifi + server (HTTP/WS/static) |
-| `j1939` (J1939System) | 70 | false | TWAI-приём, TP, снапшоты |
+| `j1939` (J1939System) | 70 | false | TWAI-приём, TP-сессии, отправка RQST |
+| `scanner` (J1939Scanner) | 80 | false | аккумулятор PGN, батчи снапшотов, команды |
 
 Правило владения: `ctx->config` пишет только ConfigStore; снапшоты идут
-J1939System → CommunicationModule → WsHandler (WS broadcast). J1939System
-про WS не знает: она безусловно публикует снапшот, а отправлять ли его (и
-есть ли слушатели) решает подмодуль `J1939Channel` в CommunicationModule.
+J1939Scanner → CommunicationModule → WsHandler (WS broadcast). J1939Scanner
+публикует снапшот безусловно, а отправлять ли его (и есть ли слушатели)
+решает подмодуль `J1939Channel` в CommunicationModule. Горячий поток PGN
+J1939System → сканер идёт не через event bus, а через очередь
+`AppContext::j1939Msg` (J1939MsgChannel.hpp); команды обратно — событиями.
 
 ## Протокол
 

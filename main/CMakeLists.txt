@@ -1,8 +1,8 @@
 idf_component_register(
     SRCS "main.cpp"
     INCLUDE_DIRS ""
-    REQUIRES common config_store communication netctrl j1939_system system_status
-             freertos log
+    REQUIRES common config_store communication netctrl j1939_system j1939_scanner
+             system_status freertos log
 )
 
 # Create a LittleFS image from the contents of the 'frontend/dist' directory

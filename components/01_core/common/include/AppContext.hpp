@@ -3,6 +3,7 @@
 #include "AppData.hpp"
 #include "EventManager.hpp"
 #include "FieldRegistry.hpp"
+#include "J1939MsgChannel.hpp"
 #include "esp_event.h"
 #include "esp_log.h"
 #include <mutex>
@@ -13,6 +14,11 @@ struct AppContext {
     std::recursive_mutex adataMutex;  // защита составных/много-полевых операций над adata
     esp_event_loop_handle_t event_loop = nullptr;
     EventManager events;
+
+    // Горячий канал «J1939System → сканер» (SPSC-очередь PGN, см.
+    // J1939MsgChannel.hpp): исключение из правила «только event bus» —
+    // поток кадров каждые ~10 мс не должен идти через event loop.
+    J1939MsgChannel j1939Msg;
 
     // Реестр полей с контролем владения (обёртка над adata).
     FieldRegistry fields;

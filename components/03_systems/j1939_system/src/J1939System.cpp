@@ -6,19 +6,18 @@
 #include "esp_log.h"
 #include <cstdlib>
 #include <cstring>
-#include <memory>
 
 namespace {
 const char* TAG = "j1939_sys";
 
-// Стек задачи: крупные буферы (порядок/батч снапшота ≈2.5 КБ, буфер сборки
-// TP 1785 байт) вынесены в члены класса — на стеке только локальные мелочи,
-// фреймы вызовов и логи. 8192 — с запасом на фреймы/FreeRTOS/вложенность.
+// Стек задачи: крупные буферы (буфер сборки TP 1785 байт) вынесены в члены
+// класса — на стеке только локальные мелочи, фреймы вызовов и логи.
+// 8192 — с запасом на фреймы/FreeRTOS/вложенность.
 constexpr uint16_t kTaskStackSize = 8192;
 constexpr uint8_t  kTaskPriority  = 8;
 constexpr uint8_t  kTaskCore      = 0;   // ядро 0 безопасно для ESP32 и ESP32-S3
 
-// Период публикации runtime-полей TWAI (twai*, activePgns).
+// Период публикации runtime-полей TWAI (twai*).
 constexpr uint32_t kTelemetryPeriodMs = 1000;
 
 // Значения runtime-поля twaiState (TwaiFields.inc: «0=STOPPED 1=RUNNING
@@ -283,11 +282,7 @@ void J1939System::taskLoop()
     // Все времена в миллисекундах (Timing::nowMs) — тики не используются,
     // чтобы не зависеть от CONFIG_FREERTOS_HZ. Сравнения идут по (int32_t)
     // поверх uint32_t-счётчика мс — переполнение каждые ~49 суток безопасно.
-    uint32_t snapshotIntervalMs = Timing::kSnapshotIntervalMs;
-    ctx_->fields.getByUid(snapshotIntervalMs_UID, snapshotIntervalMs);
-
     const uint32_t t0 = Timing::nowMs();
-    uint32_t nextSnapshot  = t0 + snapshotIntervalMs;
     uint32_t nextTelemetry = t0 + kTelemetryPeriodMs;
 
     // Выход по stop_ (dtor): give семафора ДО сам удаления — dtor ждёт take.
@@ -302,8 +297,8 @@ void J1939System::taskLoop()
             sendRequest(req);
 
         uint32_t now = Timing::nowMs();
-        uint32_t waitMs = Timing::computeWaitMs(nextSnapshot, nextTelemetry,
-                                                now);
+        int32_t dTele = static_cast<int32_t>(nextTelemetry - now);
+        uint32_t waitMs = (dTele < 1) ? 1 : static_cast<uint32_t>(dTele);
 
         // Дренаж: обрабатываем ВСЕ накопившиеся кадры (timeout 0), иначе
         // при полной шине пул слотов (16) исчерпывается быстрее, чем одна
@@ -324,12 +319,6 @@ void J1939System::taskLoop()
 
         now = Timing::nowMs();
         tp_.tick(now);   // sweep таймаутов TP-сессий (DT могли прекратиться)
-        if ((int32_t)(now - nextSnapshot) >= 0)   // тик-безопасное сравнение
-        {
-            sendSnapshot(now);
-            ctx_->fields.getByUid(snapshotIntervalMs_UID, snapshotIntervalMs);
-            nextSnapshot = now + snapshotIntervalMs;
-        }
         if ((int32_t)(now - nextTelemetry) >= 0)
         {
             updateTwaiStatus();
@@ -405,8 +394,6 @@ void J1939System::updateTwaiStatus()
     updateField<uint32_t>(ctx_, twaiRecoverCount_UID, twaiRecoverCount_);
     updateField<uint32_t>(ctx_, twaiRxDrops_UID, twai_.rxDrops());
     updateField<uint32_t>(ctx_, twaiTxDrops_UID, twai_.txDrops());
-    updateField<uint16_t>(ctx_, activePgns_UID,
-                          static_cast<uint16_t>(acc_.count()));
 }
 
 void J1939System::processFrame(const TwaiDriver::RxFrame& frame, uint32_t nowMs)
@@ -425,12 +412,13 @@ void J1939System::processFrame(const TwaiDriver::RxFrame& frame, uint32_t nowMs)
         // приёма; для BAM/пассивного сниффинга остаётся None.
         TpAction act;
         if (tp_.onTpDt(m, nowMs, assembled_, &act))
-            processAssembled(assembled_, nowMs);
+            publishMsg(assembled_.sa, assembled_.pgn, assembled_.data,
+                       assembled_.len, nowMs);
         sendTpAction(act);
     }
     else
     {
-        acc_.update(m.sa, m.pgn, m.data, m.dlc, nowMs);
+        publishMsg(m.sa, m.pgn, m.data, m.dlc, nowMs);
     }
 }
 
@@ -481,87 +469,32 @@ void J1939System::sendTpAction(const TpAction& act)
                  what, (unsigned long)act.pgn, act.dst, esp_err_to_name(txErr));
 }
 
-void J1939System::processAssembled(const J1939AssembledMsg& msg, uint32_t nowMs)
+void J1939System::publishMsg(uint32_t sa, uint32_t pgn, const uint8_t* data,
+                             size_t len, uint32_t nowMs)
 {
-    acc_.update(msg.sa, msg.pgn, msg.data, msg.len, nowMs);
-}
+    j1939_msg_t m{};
+    m.tsMs = nowMs;
+    m.pgn = pgn;
+    m.sa = static_cast<uint8_t>(sa);
+    m.len = static_cast<uint16_t>(len);
 
-void J1939System::sendSnapshot(uint32_t nowMs)
-{
-    // Публикация безусловна: гейт «аудитории нет» живёт в J1939Channel
-    // (Comm) — здесь только домен: сбор активных записей и батч.
-    const SnapshotAccumulator::Record* recs = nullptr;
-    uint32_t ttlMs = Timing::kSnapshotTtlMs;
-    ctx_->fields.getByUid(snapshotTtlMs_UID, ttlMs);
-    const size_t n = acc_.collect(recs, nowMs, ttlMs);
-    if (n == 0)
-        return;   // нет активных записей — пустой батч не шлём
-
-    // Потолок карты аккумулятора (поле maxTrackedPgns, 16..128): применяется
-    // к уже отсортированному порядку, т.е. «свежие первыми» (PROTOCOL §7).
-    uint16_t maxTracked = SnapshotAccumulator::kMaxRecords;
-    ctx_->fields.getByUid(maxTrackedPgns_UID, maxTracked);
-    const size_t emitLimit =
-        (n < static_cast<size_t>(maxTracked)) ? n : static_cast<size_t>(maxTracked);
-
-    // Порядок записей в батче — «свежие первыми»: сортируем индексы по
-    // lastTsMs (убывание), чтобы при усечении терялись самые старые записи
-    // (PROTOCOL §7). n ≤ kMaxRecords, сортировка вставками — без кучи.
-    // Массивы — члены snapOrder_/snapBatch_ (~2.5 КБ не помещались на стеке
-    // задачи с запасом); используется только из taskLoop (задача одна).
-    for (size_t i = 0; i < n; ++i)
-        snapOrder_[i] = i;
-    for (size_t i = 1; i < n; ++i)
+    if (len <= sizeof(m.smallData))
     {
-        const size_t key = snapOrder_[i];
-        size_t j = i;
-        while (j > 0 && recs[snapOrder_[j - 1]].lastTsMs < recs[key].lastTsMs)
-        {
-            snapOrder_[j] = snapOrder_[j - 1];
-            --j;
-        }
-        snapOrder_[j] = key;
+        std::memcpy(m.smallData, data, len);
+        m.bigData = nullptr;
+    }
+    else
+    {
+        // Длинное сообщение (собранный TP, до 1785 байт) — heap-буфер:
+        // очередь тащит только указатель, не копию.
+        m.bigData = static_cast<uint8_t*>(std::malloc(len));
+        if (!m.bigData)
+            return;   // нет памяти — сообщение пропущено, утечки нет
+        std::memcpy(m.bigData, data, len);
     }
 
-    // Записи батча ссылаются на данные аккумулятора без копирования.
-    size_t batchCount = 0;
-    size_t payloadLen = 0;
-    for (size_t k = 0; k < emitLimit; ++k)
-    {
-        const SnapshotAccumulator::Record& r = recs[snapOrder_[k]];
-        J1939Proto::BatchRecord b;
-        b.sa = r.sa;
-        b.pgn = r.pgn;
-        b.len = r.len;
-        b.data = r.data();
-        b.periodMs = r.periodMs;
-
-        // Усечение: запись кладём только если батч ещё влезает в лимит payload.
-        const size_t add = J1939Proto::batchPayloadSize(&b, 1);
-        if (payloadLen + add > J1939Proto::kMaxBatchPayload)
-            break;   // остальные (более старые) отбрасываем
-        snapBatch_[batchCount++] = b;
-        payloadLen += add;
-    }
-    if (batchCount == 0)
-        return;
-
-    const size_t evSize = sizeof(j1939_snapshot_t) + payloadLen;
-    // malloc + unique_ptr с deleter free: батч (до ~8 КБ) и так не на стеке,
-    // а RAII освобождает буфер на всех путях выхода
-    // (раньше — ручной free только на успешном пути; ранний return ниже
-    // был бы утечкой). Выравнивание max_align_t — под flexible array.
-    std::unique_ptr<j1939_snapshot_t, decltype(&std::free)> snap(
-        static_cast<j1939_snapshot_t*>(std::malloc(evSize)), &std::free);
-    if (!snap)
-        return;
-
-    snap->length = payloadLen;
-    J1939Proto::serializeBatch(snap->data, payloadLen,
-                               snapBatch_.data(), batchCount);
-
-    postSizedEvent<app_event_id_t::J1939_SNAPSHOT_SEND>(
-        ctx_->events, snap.get(), evSize);
-    // postSizedEvent скопировал данные в очередь event loop'а → буфер здесь
-    // больше не нужен; освободит unique_ptr.
+    // Канал забирает владение m.bigData всегда (при дропе — освобождает сам):
+    // после push буфером не управляем.
+    ctx_->j1939Msg.push(m);
 }
+

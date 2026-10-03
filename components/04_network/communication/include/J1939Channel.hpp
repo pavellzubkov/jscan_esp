@@ -8,8 +8,8 @@ class FrameTx;
 
 // J1939-ветка коммуникационного протокола (MsgType 0x0001 снапшоты исходящие,
 // 0x0002 запрос PGN входящий). Владеет аудиторией WS-клиентов и решает,
-// отправлять ли снапшоты вообще: J1939System не знает про WS и безусловно
-// публикует J1939_SNAPSHOT_SEND, а здесь гейт «клиентов нет — не шлём».
+// отправлять ли снапшоты вообще: J1939Scanner публикует J1939_SNAPSHOT_SEND
+// безусловно, а здесь гейт «клиентов нет — не шлём».
 // Осознанно отдельно от CommModule: канал параметров (0x0003..0x0008) и
 // J1939-канал — разные протоколы с разной политикой доставки.
 class J1939Channel {
@@ -23,7 +23,7 @@ public:
 
     // Входящий MsgType 0x0002 (J1939_REQUEST): {dstAddr u8, pgn u32 LE}.
     // Вызывается CommModule после unwrapFrame — здесь парсинг и post
-    // доменной команды J1939System.
+    // команды SCANNER_REQUEST (J1939Scanner → форвард в J1939System).
     void onClientRequest(const uint8_t* payload, size_t payloadLen);
 
 private:

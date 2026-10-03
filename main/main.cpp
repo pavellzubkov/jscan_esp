@@ -3,6 +3,7 @@
 #include "ConfigStore.hpp"
 #include "CommModule.hpp"
 #include "NetworkController.hpp"
+#include "J1939Scanner.hpp"
 #include "J1939System.hpp"
 #include "SystemStatusModule.hpp"
 #include "esp_log.h"
@@ -30,8 +31,12 @@ extern "C" void app_main() {
     // sysinfo — системный статус (SYSTEM-домен): fwVersion пишется один раз;
     // uptimeMs/heapFree вычисляются на лету при чтении (без периодических задач).
     REGISTER_MODULE(boot, "sysinfo", SystemStatusModule,  50, false);
-    // j1939 — TWAI-приём, TP, снапшоты.
+    // j1939 — универсальный J1939: TWAI-приём, TP-сессии, отправка RQST.
     REGISTER_MODULE(boot, "j1939",   J1939System,         70, false);
+    // scanner — модуль сканера поверх J1939: аккумулятор PGN, батчи
+    // снапшотов, команды сканирования. После j1939: очередь j1939Msg
+    // уже запущена, потребитель встаёт чуть позже (дропы на старте — норма).
+    REGISTER_MODULE(boot, "scanner", J1939Scanner,        80, false);
 
     esp_err_t overall = boot.startAll(&ctx);
     if (overall != ESP_OK) {

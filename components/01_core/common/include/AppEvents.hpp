@@ -14,8 +14,9 @@
 ESP_EVENT_DECLARE_BASE(APP_EVENTS_BASE);
 
 enum class app_event_id_t : int32_t {
-    J1939_SNAPSHOT_SEND,    // данные: j1939_snapshot_t (postSized), байты батча
-    J1939_REQUEST,          // данные: j1939_request_t — команда «послать RQST»
+    J1939_SNAPSHOT_SEND,    // данные: j1939_snapshot_t (postSized), байты батча (от сканера)
+    SCANNER_REQUEST,         // данные: j1939_request_t — команда клиента → J1939Scanner
+    J1939_REQUEST,           // данные: j1939_request_t — сканер → J1939System «послать RQST»
     WS_MESSAGE_RECEIVED,    // данные: ws_message_t (входящее WS-сообщение)
     WS_MESSAGE_SEND,        // данные: ws_message_t (исходящее WS-сообщение)
     WS_CLIENT_CONNECTED,    // данные: ws_message_t (sockfd только)
@@ -47,7 +48,8 @@ struct j1939_snapshot_t {
     uint8_t data[];
 };
 
-// Команда клиента: запросить PGN по J1939 (RQST, PGN 59904).
+// Команда «запросить PGN по J1939» (RQST, PGN 59904): payload и для
+// SCANNER_REQUEST (Comm → сканер), и для J1939_REQUEST (сканер → J1939System).
 struct j1939_request_t {
     uint8_t  dstAddr;   // адрес назначения (адрес запрашиваемого узла)
     uint32_t pgn;       // запрашиваемый PGN (напр. 65227/65228)
@@ -90,6 +92,11 @@ template <>
 struct AppEventPayload<app_event_id_t::J1939_SNAPSHOT_SEND> {
     using type = j1939_snapshot_t;
     static constexpr bool sized = true;
+};
+template <>
+struct AppEventPayload<app_event_id_t::SCANNER_REQUEST> {
+    using type = j1939_request_t;
+    static constexpr bool sized = false;
 };
 template <>
 struct AppEventPayload<app_event_id_t::J1939_REQUEST> {

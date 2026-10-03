@@ -88,5 +88,7 @@ void J1939Channel::onClientRequest(const uint8_t* payload, size_t payloadLen)
               (static_cast<uint32_t>(payload[2]) << 8) |
               (static_cast<uint32_t>(payload[3]) << 16);
     ESP_LOGI(TAG, "RQST pgn=%lu dst=%u", (unsigned long)req.pgn, req.dstAddr);
-    postEvent<app_event_id_t::J1939_REQUEST>(ctx_->events, req);
+    // Команда идёт через сканер (SCANNER_REQUEST): J1939Scanner форвардит
+    // её J1939_REQUEST — единая точка команд сканирования.
+    postEvent<app_event_id_t::SCANNER_REQUEST>(ctx_->events, req);
 }

@@ -3,7 +3,6 @@
 #include "J1939Decoder.hpp"
 #include "J1939Proto.hpp"
 #include "J1939TransportProtocol.hpp"
-#include "SnapshotAccumulator.hpp"
 #include "TwaiDriver.hpp"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
@@ -12,10 +11,14 @@
 #include <array>
 #include <atomic>
 
-// Координатор J1939: владеет драйвером TWAI, декодером, TP и аккумулятором.
-// Одна задача: приём кадров + публикация снапшотов по таймеру.
+// Универсальный J1939: владеет драйвером TWAI, декодером и TP-сессиями
+// (BAM/RTS/CTS/EOM), шлёт RQST по команде. Одна задача: приём кадров +
+// телеметрия TWAI. Готовые сообщения (одиночные кадры и собранные TP)
+// публикует в AppContext::j1939Msg (SPSC-очередь) — потребитель и вся
+// политика (аккумулятор, TTL, батч, снапшоты) — в J1939Scanner.
 // О WS-клиентах и доставке не знает: снапшот публикуется безусловно
-// (J1939_SNAPSHOT_SEND), решение «слать/не слать» — в J1939Channel (Comm).
+// (J1939_SNAPSHOT_SEND, уже сканером), решение «слать/не слать» — в
+// J1939Channel (Comm).
 class J1939System {
 public:
     explicit J1939System(AppContext* ctx);
@@ -27,15 +30,10 @@ private:
     AppContext* ctx_;
     TwaiDriver twai_;
     J1939TransportProtocol tp_;
-    SnapshotAccumulator acc_;
     TaskHandle_t task_ = nullptr;
 
-    // Крупные рабочие буферы — члены класса, а не стек taskLoop (суммарно
-    // ~4.3 КБ: порядок сортировки 128 индексов = 512 Б, батч записей ~2 КБ,
-    // буфер сборки TP = 1785+ байт). Используются только из задачи J1939
-    // (она одна) — синхронизация не нужна. См. kTaskStackSize.
-    std::array<size_t, SnapshotAccumulator::kMaxRecords> snapOrder_{};
-    std::array<J1939Proto::BatchRecord, SnapshotAccumulator::kMaxRecords> snapBatch_{};
+    // Буфер сборки TP — член класса (1785+ байт не помещались бы на стеке
+    // taskLoop с запасом); используется только из задачи J1939 (она одна).
     J1939AssembledMsg assembled_{};
 
     // Очередь RQST от клиентов (J1939_REQUEST): событие (event-loop) только
@@ -62,13 +60,14 @@ private:
     // Применение TWAI-конфига по CONFIG_CHANGED (canNodeAddr/canTxTimeoutMs сразу,
     // canBitrate — после перезагрузки, с валидацией набора {125/250/500/1000} кбит/с).
     void onConfigChanged(const field_change_event_t* evt);
-    // Публикация runtime-полей twai* и activePgns (~1 раз в секунду).
+    // Публикация runtime-полей twai* (~1 раз в секунду).
     void updateTwaiStatus();
 
     static void taskWrapper(void* p);
     void taskLoop();
 
     void processFrame(const TwaiDriver::RxFrame& frame, uint32_t nowMs);
-    void processAssembled(const J1939AssembledMsg& msg, uint32_t nowMs);
-    void sendSnapshot(uint32_t nowMs);
+    // Готовое сообщение (кадр/сборка TP) → очередь сканера (j1939Msg).
+    void publishMsg(uint32_t sa, uint32_t pgn, const uint8_t* data,
+                    size_t len, uint32_t nowMs);
 };

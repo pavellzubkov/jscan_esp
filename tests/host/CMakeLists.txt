@@ -12,12 +12,13 @@ set(HOST_TEST_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 set(COMMON_DIR   ${HOST_TEST_DIR}/../../components/01_core/common)
 set(TWAI_DIR     ${HOST_TEST_DIR}/../../components/02_hardware/twai)
 set(J1939_DIR    ${HOST_TEST_DIR}/../../components/03_systems/j1939_system)
+set(SCANNER_DIR  ${HOST_TEST_DIR}/../../components/03_systems/j1939_scanner)
 
 add_executable(host_tests
     main.cpp
     ${COMMON_DIR}/src/J1939Proto.cpp
     ${COMMON_DIR}/src/FieldRegistry.cpp
-    ${J1939_DIR}/src/SnapshotAccumulator.cpp
+    ${SCANNER_DIR}/src/SnapshotAccumulator.cpp
     ${J1939_DIR}/src/J1939TransportProtocol.cpp
     ${J1939_DIR}/src/J1939Decoder.cpp
 )
@@ -28,6 +29,7 @@ target_include_directories(host_tests PRIVATE
     ${COMMON_DIR}/include/fields
     ${TWAI_DIR}/include             # TwaiDriver.hpp — только типы (RxFrame), .cpp не входит
     ${J1939_DIR}/include
+    ${SCANNER_DIR}/include
 )
 
 target_compile_definitions(host_tests PRIVATE HOST_TEST=1)
