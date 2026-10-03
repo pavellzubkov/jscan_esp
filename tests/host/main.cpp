@@ -1,4 +1,4 @@
-// Host-тесты без IDF (C++20). Запуск:
+// Host-тесты без IDF (C++23; g++ 11.4 в WSL -> -std=gnu++2b). Запуск:
 //   cmake -S tests/host -B build/host && cmake --build build/host && ./build/host/host_tests
 // Покрытие: J1939Proto, FieldRegistry, SnapshotAccumulator, Timing::computeWaitMs,
 // J1939TransportProtocol (BAM/RTS/CTS/EOM), J1939Decoder.
