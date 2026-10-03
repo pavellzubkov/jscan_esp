@@ -7,8 +7,10 @@
 #include "TwaiDriver.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 #include <array>
+#include <atomic>
 
 // Координатор J1939: владеет драйвером TWAI, декодером, TP и аккумулятором.
 // Одна задача: приём кадров + публикация снапшотов по таймеру.
@@ -39,6 +41,14 @@ private:
     // Очередь RQST от клиентов (J1939_REQUEST): событие (event-loop) только
     // ставит запрос, TX с блокировкой до canTxTimeoutMs выполняется в taskLoop.
     QueueHandle_t reqQueue_ = nullptr;
+
+    // Graceful shutdown (паттерн DnsServer::stop): dtor ставит stop_ ->
+    // taskLoop выходит из цикла -> give doneSem_ ПЕРЕД vTaskDelete(nullptr);
+    // dtor ждёт семафор с таймаутом, fallback — принудительный vTaskDelete.
+    // Задачу нельзя убивать под twai_.transmit (мьютекс навсегда занят) или
+    // посреди processFrame — иначе twai_.end() в dtor виснет.
+    std::atomic<bool> stop_{false};
+    SemaphoreHandle_t doneSem_ = nullptr;
 
     uint32_t twaiRecoverCount_ = 0;   // число авто-recover после BUS_OFF
 

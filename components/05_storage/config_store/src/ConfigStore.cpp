@@ -169,10 +169,9 @@ ConfigStore::~ConfigStore() {
     // на удалённый объект (UAF при первом же событии).
     if (ctx_)
         ctx_->events.unsubscribe(this);
-    if (task_) {
-        vTaskDelete(task_);
-        task_ = nullptr;
-    }
+    // Graceful stop автосейва — задачу нельзя убить посреди saveToFs
+    // (запись в flash: open/write/rename). Паттерн DnsServer::stop.
+    stopAutoSave();
 }
 
 esp_err_t ConfigStore::begin() {
@@ -201,10 +200,20 @@ esp_err_t ConfigStore::begin() {
 
     loadFromFs();
 
+    // Семафор завершения — до создания задачи (паттерн DnsServer::start).
+    stop_.store(false);
+    doneSem_ = xSemaphoreCreateBinary();
+    if (!doneSem_) {
+        ESP_LOGE(TAG, "done semaphore create failed");
+        return ESP_FAIL;
+    }
+
     if (xTaskCreate(autoSaveWrapper, "cfg_autosave", 4096, this, 3, &task_) !=
         pdPASS) {
         ESP_LOGE(TAG, "Failed to create auto-save task");
         task_ = nullptr;
+        vSemaphoreDelete(doneSem_);
+        doneSem_ = nullptr;
         return ESP_FAIL;
     }
 
@@ -444,6 +453,13 @@ void ConfigStore::saveToFs() {
 esp_err_t ConfigStore::reset() {
     ESP_LOGW(TAG, "Factory reset: restoring defaults and clearing config");
 
+    // Сначала гасим автосейв: иначе задача может ПИСАТЬ файл (dirty_ от
+    // старых изменений) параллельно с unlink/сбросом — после unlink запись
+    // «воскресит» config.json со старыми значениями (или убьёт reset посреди
+    // манипуляций с FS). Задача даёт doneSem_ до удаления себя — join с
+    // таймаутом; запись в flash укладывается в 2 с с запасом.
+    stopAutoSave();
+
     {
         // Гонка с задачами WIFI/SYSTEM, пишущими adata: сброс дефолтов —
         // только под общим локом (рекурсивный, вложенность безопасна).
@@ -452,6 +468,7 @@ esp_err_t ConfigStore::reset() {
     }
 
     // Удаляем файл конфига (+tmp), чтобы при старте применились дефолты.
+    // Автосейв уже остановлен — никто не перезапишет файл после unlink.
     unlink((basePath_ + kConfigPath).c_str());
     unlink((basePath_ + kConfigPath + ".tmp").c_str());
 
@@ -467,6 +484,39 @@ void ConfigStore::autoSaveWrapper(void* p) {
 void ConfigStore::autoSaveLoop() {
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(1000));
+        // Проверка stop_ ПОСЛЕ задержки и ДО saveToFs: после запроса стопа
+        // (dtor/reset) не начинать новую запись в flash; уже идущая saveToFs
+        // завершается — join в stopAutoSave ждёт её (таймаут 2 с).
+        if (stop_.load()) break;
         if (dirty_.load()) saveToFs();
+    }
+    // Give ДО сам удаления — stopAutoSave ждёт take; хэндл задачи дальше
+    // трогать нельзя (только забыть).
+    if (doneSem_) xSemaphoreGive(doneSem_);
+    vTaskDelete(nullptr);
+}
+
+void ConfigStore::stopAutoSave() {
+    // Ожидание нужно, только если задача создавалась (task_ + семафор есть).
+    const bool needWait = (task_ != nullptr && doneSem_ != nullptr);
+    stop_.store(true);
+    if (needWait) {
+        // Задача даёт doneSem_ ПЕРЕД vTaskDelete(nullptr); спит она не дольше
+        // vTaskDelay(1000) плюс текущая saveToFs — таймаут 2000 мс покрывает.
+        // Короткий повторный take сужает гонку «Give на границе таймаута».
+        if (xSemaphoreTake(doneSem_, 2000 / portTICK_PERIOD_MS) == pdTRUE ||
+            xSemaphoreTake(doneSem_, 100 / portTICK_PERIOD_MS) == pdTRUE) {
+            task_ = nullptr;
+        } else {
+            // Задача зависла (Give не пришёл → она жива): принудительно
+            // удаляем. После vTaskDelete удаление семафора ниже безопасно.
+            ESP_LOGE(TAG, "autosave task did not stop in time, forcing delete");
+            vTaskDelete(task_);
+            task_ = nullptr;
+        }
+    }
+    if (doneSem_) {
+        vSemaphoreDelete(doneSem_);
+        doneSem_ = nullptr;
     }
 }

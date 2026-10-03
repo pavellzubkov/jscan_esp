@@ -3,6 +3,7 @@
 #include "LittleFsService.hpp"
 #include "cJSON.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 #include <atomic>
 #include <cstdint>
@@ -43,6 +44,14 @@ private:
 
     static void autoSaveWrapper(void* p);
     void autoSaveLoop();     // раз в ~1 с: если dirty → saveToFs()
+    // Graceful stop автосейва (паттерн DnsServer::stop): stop_ ->
+    // autoSaveLoop выходит (после vTaskDelay, ДО новой saveToFs) -> give
+    // doneSem_ -> vTaskDelete(nullptr); ждём с таймаутом, fallback —
+    // принудительный vTaskDelete. Иначе задачу можно убить посреди записи
+    // в flash (open/write/rename). Вызывается из dtor и reset() (до unlink).
+    void stopAutoSave();
     std::atomic<bool> dirty_ = false;
+    std::atomic<bool> stop_{false};
+    SemaphoreHandle_t doneSem_ = nullptr;
     TaskHandle_t task_ = nullptr;
 };

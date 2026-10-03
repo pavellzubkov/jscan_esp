@@ -66,10 +66,27 @@ J1939System::J1939System(AppContext* ctx)
 
 J1939System::~J1939System()
 {
+    // Graceful stop задачи (паттерн DnsServer::stop): НЕ vTaskDelete в лоб —
+    // задачу можно убить внутри twai_.transmit (под txMux_) -> мьютекс навсегда
+    // занят -> twai_.end() ниже виснет. Стоп-флаг: taskLoop выходит по
+    // while (!stop_), даёт doneSem_ ПЕРЕД vTaskDelete(nullptr); ждём до 2 с
+    // (цикл спит не дольше waitMs ~1 с — телеметрия), короткий повторный take
+    // сужает гонку «Give на границе таймаута»; иначе fallback-удаление.
     if (task_)
     {
-        vTaskDelete(task_);
-        task_ = nullptr;
+        stop_.store(true);
+        if (doneSem_ &&
+            (xSemaphoreTake(doneSem_, 2000 / portTICK_PERIOD_MS) == pdTRUE ||
+             xSemaphoreTake(doneSem_, 100 / portTICK_PERIOD_MS) == pdTRUE))
+        {
+            task_ = nullptr;   // задача удалила себя сама — хэндл трогать нельзя
+        }
+        else
+        {
+            ESP_LOGE(TAG, "j1939 task did not stop in time, forcing delete");
+            vTaskDelete(task_);
+            task_ = nullptr;
+        }
     }
     if (ctx_)
         ctx_->events.unsubscribe(this);
@@ -78,6 +95,11 @@ J1939System::~J1939System()
     {
         vQueueDelete(reqQueue_);
         reqQueue_ = nullptr;
+    }
+    if (doneSem_)
+    {
+        vSemaphoreDelete(doneSem_);
+        doneSem_ = nullptr;
     }
 }
 
@@ -134,6 +156,18 @@ esp_err_t J1939System::begin()
         return ESP_FAIL;
     }
 
+    // Семафор завершения — до создания задачи (паттерн DnsServer::start).
+    stop_.store(false);
+    doneSem_ = xSemaphoreCreateBinary();
+    if (!doneSem_)
+    {
+        ESP_LOGE(TAG, "done semaphore create failed");
+        twai_.end();
+        vQueueDelete(reqQueue_);
+        reqQueue_ = nullptr;
+        return ESP_FAIL;
+    }
+
     if (xTaskCreatePinnedToCore(taskWrapper, "j1939", kTaskStackSize, this,
                                 kTaskPriority, &task_, kTaskCore) != pdPASS)
     {
@@ -144,6 +178,8 @@ esp_err_t J1939System::begin()
             vQueueDelete(reqQueue_);
             reqQueue_ = nullptr;
         }
+        vSemaphoreDelete(doneSem_);
+        doneSem_ = nullptr;
         return ESP_FAIL;
     }
 
@@ -264,7 +300,10 @@ void J1939System::taskLoop()
     uint32_t nextSnapshot  = t0 + snapshotIntervalMs;
     uint32_t nextTelemetry = t0 + kTelemetryPeriodMs;
 
-    while (1)
+    // Выход по stop_ (dtor): give семафора ДО сам удаления — dtor ждёт take.
+    // Ожидание в xQueueReceive не дольше waitMs (телеметрия ~1 с) — dtor
+    // укладывается в таймаут 2000 мс даже без отдельного события.
+    while (!stop_.load())
     {
         // RQST от клиентов обрабатываем в своей задаче: TX может блокировать
         // до canTxTimeoutMs — нельзя делать это в event-loop задаче.
@@ -307,6 +346,11 @@ void J1939System::taskLoop()
             nextTelemetry = now + kTelemetryPeriodMs;
         }
     }
+
+    // Задача завершается сама: dtor уже ждёт doneSem_ — хэндл трогать нельзя.
+    if (doneSem_)
+        xSemaphoreGive(doneSem_);
+    vTaskDelete(nullptr);
 }
 
 void J1939System::updateTwaiStatus()
