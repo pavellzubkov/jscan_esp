@@ -50,6 +50,17 @@ private:
 
     uint32_t twaiRecoverCount_ = 0;   // число авто-recover после BUS_OFF
 
+    // Bus-off recovery с экспоненциальным backoff (ARCH_FIX4, шаг 2).
+    // Вызывается из taskLoop по событию takeBusOffEvent() и как fallback
+    // в тик телеметрии; уважает canAutoRecover. Только задача J1939 — без локов.
+    static constexpr uint32_t kRecoverBackoffBaseMs = 100;    // первый интервал
+    static constexpr uint32_t kRecoverBackoffCapMs  = 30000;  // потолок (×2 до cap)
+    static constexpr uint32_t kRecoverStableResetMs = 60000;  // без bus-off → сброс backoff
+    uint32_t recoverBackoffMs_   = kRecoverBackoffBaseMs;
+    uint32_t nextRecoverAllowedMs_ = 0;   // до этого момента recover запрещён
+    uint32_t lastBusOffMs_ = 0;           // момент последнего входа в bus-off
+    void tryRecoverBusOff(uint32_t nowMs);
+
     // Обработчик команды клиента «запросить PGN» (J1939_REQUEST): только
     // кладёт запрос в reqQueue_ (не блокирует event loop).
     void onJ1939Request(const j1939_request_t* req);

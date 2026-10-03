@@ -21,6 +21,8 @@ public:
         uint8_t    txQueueDepth = 4;
         uint8_t    rxSlots      = 16;     // размер пула ISR-слотов (полная шинная
                                            // нагрузка исчерпывает 8 за миллисекунды)
+        int        failRetryCnt = 3;      // HW-ретраи TX, диапазон IDF [-1:15];
+                                           // -1 (вечно) иссушает TX-пул на мёртвой шине
         int        intrPriority = 1;
     };
 
@@ -72,6 +74,12 @@ public:
 
     bool started() const { return node_ != nullptr; }
 
+    // Событие bus-off: on_state_change (ISR) ставит флаг, задача снимает
+    // однократно. Счётчик busOffEvents() — суммарное число входов в bus-off
+    // (для диагностики/логов; атомики — контекст колбэка неизвестен).
+    bool     takeBusOffEvent() { return busOffSeen_.exchange(false); }
+    uint32_t busOffEvents() const { return busOffEvents_.load(std::memory_order_relaxed); }
+
     // Дроп-счётчики (32-бит атомики — lock-free на ESP32, безопасно из ISR):
     // rxDrops — в ISR не было свободного слота либо ready-очередь отказалась
     // принять указатель (слот возвращается в free, кадр теряется);
@@ -84,6 +92,13 @@ private:
     static IRAM_ATTR bool rxDoneCb(twai_node_handle_t node,
                                    const twai_rx_done_event_data_t* edata,
                                    void* user_ctx);
+
+    // ISR-колбэк смены состояния шины: переход в BUS_OFF фиксируется флагом
+    // для задачи (см. takeBusOffEvent). on_error НЕ подходит: он несёт только
+    // err_flags (BUS_ERR/ARB_LOST), old_sta/new_sta — в on_state_change.
+    static IRAM_ATTR bool stateChangeCb(twai_node_handle_t node,
+                                        const twai_state_change_event_data_t* edata,
+                                        void* user_ctx);
 
     struct RxSlot;    // полное определение — в .cpp
 
@@ -116,4 +131,6 @@ private:
     SemaphoreHandle_t txMux_       = nullptr;   // сериализация transmit()/end()
     std::atomic<uint32_t> rxDrops_ {0};         // потерянные RX-кадры (см. rxDrops())
     std::atomic<uint32_t> txDrops_ {0};         // потерянные TX-кадры (см. txDrops())
+    std::atomic<bool>     busOffSeen_ {false};  // был переход в BUS_OFF (см. takeBusOffEvent)
+    std::atomic<uint32_t> busOffEvents_ {0};    // суммарно входов в bus-off
 };

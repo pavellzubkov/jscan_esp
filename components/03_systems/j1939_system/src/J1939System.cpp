@@ -4,6 +4,7 @@
 #include "LogicUtils.hpp"
 #include "SystemTiming.hpp"
 #include "esp_log.h"
+#include <algorithm>
 #include <cstdlib>
 #include <cstring>
 
@@ -319,6 +320,10 @@ void J1939System::taskLoop()
 
         now = Timing::nowMs();
         tp_.tick(now);   // sweep таймаутов TP-сессий (DT могли прекратиться)
+        // Событие bus-off из ISR-колбэка драйвера: recover немедленно (с
+        // backoff), не дожидаясь тика телеметрии. Fallback в updateTwaiStatus.
+        if (twai_.takeBusOffEvent())
+            tryRecoverBusOff(now);
         if ((int32_t)(now - nextTelemetry) >= 0)
         {
             updateTwaiStatus();
@@ -367,23 +372,20 @@ void J1939System::updateTwaiStatus()
     uint8_t state = static_cast<uint8_t>(kStateRunning);
     if (st.state == TWAI_ERROR_BUS_OFF)
     {
+        const uint32_t now = Timing::nowMs();
+        // Fallback: событие bus-off из ISR могло не дойти (например, до
+        // запуска задачи) — цикл восстановления запускаем и по опросу.
+        tryRecoverBusOff(now);
+
         bool canAutoRecover = false;
         {
             AppDataLock lock(ctx_);   // чтение config-поля — под локом adata
             ctx_->fields.getByUid(canAutoRecover_UID, canAutoRecover);
         }
-        if (canAutoRecover)
-        {
-            ESP_LOGW(TAG, "BUS_OFF detected, recovering");
-            twai_.recover();
-            ++twaiRecoverCount_;
-            // Следующий опрос покажет реальное состояние после recover.
-            state = static_cast<uint8_t>(kStateRecovering);
-        }
-        else
-        {
-            state = static_cast<uint8_t>(kStateBusOff);
-        }
+        // autoRecover включён → идёт цикл recover (RECOVERING, включая
+        // ожидание backoff); выключен → остаёмся в BUS_OFF до ручного вмешательства.
+        state = canAutoRecover ? static_cast<uint8_t>(kStateRecovering)
+                               : static_cast<uint8_t>(kStateBusOff);
     }
     // ACTIVE/WARNING/PASSIVE — узел в сети (RUNNING).
 
@@ -394,6 +396,37 @@ void J1939System::updateTwaiStatus()
     updateField<uint32_t>(ctx_, twaiRecoverCount_UID, twaiRecoverCount_);
     updateField<uint32_t>(ctx_, twaiRxDrops_UID, twai_.rxDrops());
     updateField<uint32_t>(ctx_, twaiTxDrops_UID, twai_.txDrops());
+}
+
+// Bus-off recovery с экспоненциальным backoff: 100 мс → ×2 → cap 30 с,
+// чтобы мёртвая шина не иссушала TX-пул частыми disable/enable. Backoff
+// сбрасывается, если после recover шина продержалась >60 с без bus-off.
+// Вызывается из taskLoop (событие ISR + fallback телеметрии) — одна задача.
+void J1939System::tryRecoverBusOff(uint32_t nowMs)
+{
+    if ((int32_t)(nowMs - nextRecoverAllowedMs_) < 0)
+        return;   // backoff: recover ещё не разрешён
+
+    bool canAutoRecover = false;
+    {
+        AppDataLock lock(ctx_);   // чтение config-поля — под локом adata
+        ctx_->fields.getByUid(canAutoRecover_UID, canAutoRecover);
+    }
+    if (!canAutoRecover)
+        return;   // авто-recover выключен — состояние опубликует телеметрия
+
+    // Шина стабильна дольше порога — начинаем с минимального интервала
+    if (lastBusOffMs_ != 0 && nowMs - lastBusOffMs_ > kRecoverStableResetMs)
+        recoverBackoffMs_ = kRecoverBackoffBaseMs;
+
+    ESP_LOGW(TAG, "BUS_OFF: recovering (backoff=%lu ms)",
+             (unsigned long)recoverBackoffMs_);
+    twai_.recover();
+    ++twaiRecoverCount_;
+
+    lastBusOffMs_ = nowMs;
+    nextRecoverAllowedMs_ = nowMs + recoverBackoffMs_;
+    recoverBackoffMs_ = std::min(recoverBackoffMs_ * 2, kRecoverBackoffCapMs);
 }
 
 void J1939System::processFrame(const TwaiDriver::RxFrame& frame, uint32_t nowMs)

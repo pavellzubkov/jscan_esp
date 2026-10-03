@@ -4,6 +4,7 @@
 #include "esp_log.h"
 #include "esp_twai.h"
 #include "esp_twai_onchip.h"
+#include <algorithm>
 #include <cstring>
 #include <new>
 
@@ -58,6 +59,22 @@ bool TwaiDriver::rxDoneCb(twai_node_handle_t node,
         self->rxDrops_.fetch_add(1, std::memory_order_relaxed);
     }
     return (hpw == pdTRUE);
+}
+
+// ISR-колбэк смены состояния шины: вход в BUS_OFF помечаем флагом —
+// J1939System::taskLoop снимает его через takeBusOffEvent() и запускает
+// recover с backoff (вместо поллинга раз в секунду в телеметрии).
+bool TwaiDriver::stateChangeCb(twai_node_handle_t /*node*/,
+                               const twai_state_change_event_data_t* edata,
+                               void* user_ctx)
+{
+    TwaiDriver* self = static_cast<TwaiDriver*>(user_ctx);
+    if (edata->new_sta == TWAI_ERROR_BUS_OFF)
+    {
+        self->busOffSeen_.store(true, std::memory_order_release);
+        self->busOffEvents_.fetch_add(1, std::memory_order_relaxed);
+    }
+    return false;
 }
 
 // Частичная очистка: вызывается на каждом error-path begin() и в end().
@@ -156,7 +173,8 @@ esp_err_t TwaiDriver::begin(const Config& cfg)
     node_config.io_cfg.bus_off_indicator = GPIO_NUM_NC;
     node_config.bit_timing.bitrate = cfg_.bitrate;
     node_config.tx_queue_depth = cfg_.txQueueDepth;
-    node_config.fail_retry_cnt = -1;    // ретрансляция до успеха, как в старом драйвере
+    node_config.fail_retry_cnt =
+        static_cast<int8_t>(std::min(cfg_.failRetryCnt, 15));   // IDF-диапазон [-1:15]
     node_config.intr_priority = cfg_.intrPriority;
 
     esp_err_t err = twai_new_node_onchip(&node_config, &node_);
@@ -169,6 +187,7 @@ esp_err_t TwaiDriver::begin(const Config& cfg)
     // Колбэки регистрируются до запуска узла (узел в состоянии stopped)
     twai_event_callbacks_t cbs = {};
     cbs.on_rx_done = rxDoneCb;
+    cbs.on_state_change = stateChangeCb;
     err = twai_node_register_event_callbacks(node_, &cbs, this);
     if (err != ESP_OK)
     {

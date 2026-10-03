@@ -78,18 +78,20 @@ grep-проверка, затем коммит/пуш и полная остан
 `twai_error_event_data_t` c `old_sta/new_sta/err_flags`) — подписка вместо
 поллинга раз в секунду.
 
-- [ ] `TwaiDriver.hpp`:
+- [x] `TwaiDriver.hpp`:
   - `Config += int failRetryCnt = 3;` (сейчас хардкод `-1` в
     `TwaiDriver.cpp:152`; диапазон IDF [-1:15] — бесконечная ретрансляция
     иссушает TX-пул на мёртвой шине);
-  - `static bool errorCb(...)` (колбэк драйвера): при `new_sta == BUS_OFF`
-    → `busOffSeen_.store(true)`, `errorEvents_++` (атомики — контекст
+  - `static bool stateChangeCb(...)` (колбэк драйвера; **on_state_change**,
+    не on_error — on_error несёт только err_flags, old_sta/new_sta в
+    state_change): при `new_sta == BUS_OFF`
+    → `busOffSeen_.store(true)`, `busOffEvents_++` (атомики — контекст
     колбэка неизвестен);
   - `bool takeBusOffEvent()` — `exchange(false)`.
-- [ ] `TwaiDriver.cpp:163-165`: `cbs.on_error = errorCb` рядом с `on_rx_done`.
-- [ ] `J1939System`:
-  - вынести recover из `updateTwaiStatus` (`:367-386`) в
-    `tryRecoverBusOff(nowMs)`; вызывать из `taskLoop` по
+- [x] `TwaiDriver.cpp`: `cbs.on_state_change = stateChangeCb` рядом с `on_rx_done`.
+- [x] `J1939System`:
+  - вынесен recover из `updateTwaiStatus` в
+    `tryRecoverBusOff(nowMs)`; вызывается из `taskLoop` по
     `takeBusOffEvent()` + fallback в тик телеметрии;
   - **backoff**: `kRecoverBackoffBaseMs=100`, ×2 до cap 30 с; таймер
     `nextRecoverAllowedMs_`; backoff сбрасывается, если после recover
@@ -223,7 +225,7 @@ auto st = ctx->fields.writeFieldDetectChange(uid, &value, sizeof(T),
 ## Статус
 
 - [x] Шаг 1 — decoder PDU1 + фильтр ide/RTR
-- [ ] Шаг 2 — TWAI on_error + bus-off backoff + fail_retry_cnt
+- [x] Шаг 2 — TWAI on_error + bus-off backoff + fail_retry_cnt
 - [x] Шаг 3 — сериализация TP.CM + тесты CTS/EOM
 - [x] Шаг 4 — тест J1939MsgChannel + стаб очереди
 - [ ] Шаг 5 — BootManager destroy + main
