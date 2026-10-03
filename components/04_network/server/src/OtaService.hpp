@@ -2,7 +2,7 @@
 
 #include "esp_err.h"
 #include "esp_http_server.h"
-#include "AppContext.h"
+#include "AppContext.hpp"
 #include "LittleFsService.hpp"
 #include <atomic>
 #include <cstddef>

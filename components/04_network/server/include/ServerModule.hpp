@@ -1,6 +1,6 @@
 #pragma once
 #include "esp_http_server.h"
-#include "AppContext.h"
+#include "AppContext.hpp"
 #include "LittleFsService.hpp"
 #include "../src/OtaService.hpp"
 #include <memory>

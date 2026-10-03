@@ -1,7 +1,7 @@
 #pragma once
-#include "EventManager.h"
+#include "EventManager.hpp"
 #include "esp_event_base.h"
-#include "J1939Proto.h"
+#include "J1939Proto.hpp"
 #include <atomic>
 #include <cstddef>
 #include <cstdint>

@@ -269,6 +269,6 @@ uint32  pgn       // LE, запрашиваемый PGN (например 65227 
 ## 9. Ссылки
 
 - Чекпоинт с решениями: `docs/PROTOCOL_J1939_CHECKPOINT.md`.
-- Реализация на ESP: `components/01_core/common/include/J1939Proto.h`,
+- Реализация на ESP: `components/01_core/common/include/J1939Proto.hpp`,
   `components/03_systems/j1939_system`, `components/04_network/communication`.
 - Архитектура-образец: `E:\Projects\Embedded\ESP32\Temp_pid\TEMP_PID\docs\PROTOCOL.md`.

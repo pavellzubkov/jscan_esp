@@ -1,6 +1,6 @@
 #pragma once
-#include "AppContext.h"
-#include "AppEvents.h"
+#include "AppContext.hpp"
+#include "AppEvents.hpp"
 #include <cstring>
 
 // Отправка одного поля по коммуникационному модулю (broadcast).

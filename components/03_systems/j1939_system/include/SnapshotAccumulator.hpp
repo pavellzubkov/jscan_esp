@@ -1,5 +1,5 @@
 #pragma once
-#include "J1939Proto.h"
+#include "J1939Proto.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>

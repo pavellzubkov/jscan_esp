@@ -1,6 +1,6 @@
-#include "FieldRegistry.h"
-#include "AppTypes.h"
-#include "ByteOrder.h"   // readUnsignedLE/readSignedLE — общий с ConfigStore
+#include "FieldRegistry.hpp"
+#include "AppTypes.hpp"
+#include "ByteOrder.hpp"   // readUnsignedLE/readSignedLE — общий с ConfigStore
 #include "esp_log.h"
 #include <cstring>
 #include <mutex>

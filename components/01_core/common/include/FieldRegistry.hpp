@@ -1,6 +1,6 @@
 #pragma once
-#include "AppData.h"
-#include "AppTypes.h"
+#include "AppData.hpp"
+#include "AppTypes.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <mutex>
@@ -94,7 +94,7 @@ class FieldRegistry {
         return readFieldRaw(m->uid, &out, sizeof(T));
     }
 
-    // Type-safe чтение «сырого» значения по UID-константе (*_UID из AppData.h):
+    // Type-safe чтение «сырого» значения по UID-константе (*_UID из AppData.hpp):
     // опечатка в имени UID — ошибка компиляции, а не тихий возврат false.
     // Для FixedString сверяется m->size == sizeof(T) — как в getByName.
     template <typename T>

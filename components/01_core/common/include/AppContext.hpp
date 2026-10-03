@@ -1,8 +1,8 @@
 #pragma once
-#include "AppEvents.h"
-#include "AppData.h"
-#include "EventManager.h"
-#include "FieldRegistry.h"
+#include "AppEvents.hpp"
+#include "AppData.hpp"
+#include "EventManager.hpp"
+#include "FieldRegistry.hpp"
 #include "esp_event.h"
 #include "esp_log.h"
 #include <mutex>

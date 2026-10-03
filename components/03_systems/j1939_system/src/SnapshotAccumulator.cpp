@@ -1,4 +1,4 @@
-#include "SnapshotAccumulator.h"
+#include "SnapshotAccumulator.hpp"
 #include <cstdlib>
 #include <cstring>
 

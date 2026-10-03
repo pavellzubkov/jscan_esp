@@ -1,10 +1,10 @@
-#include "CommModule.h"
+#include "CommModule.hpp"
 
-#include "AppData.h"
-#include "ByteOrder.h"
-#include "FieldRegistry.h"
-#include "J1939Proto.h"
-#include "LogicUtils.h"
+#include "AppData.hpp"
+#include "ByteOrder.hpp"
+#include "FieldRegistry.hpp"
+#include "J1939Proto.hpp"
+#include "LogicUtils.hpp"
 #include "esp_log.h"
 #include <cstring>
 

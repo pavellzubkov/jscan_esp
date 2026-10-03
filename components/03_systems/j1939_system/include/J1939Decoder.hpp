@@ -1,5 +1,5 @@
 #pragma once
-#include "TwaiDriver.h"
+#include "TwaiDriver.hpp"
 #include <cstdint>
 
 // Результат декодирования 29-бит CAN ID в поля J1939.

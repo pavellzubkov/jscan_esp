@@ -1,7 +1,7 @@
-#include "ConfigStore.h"
-#include "AppData.h"
-#include "ByteOrder.h"   // readUnsignedLE/readSignedLE — общий с FieldRegistry
-#include "LogicUtils.h"
+#include "ConfigStore.hpp"
+#include "AppData.hpp"
+#include "ByteOrder.hpp"   // readUnsignedLE/readSignedLE — общий с FieldRegistry
+#include "LogicUtils.hpp"
 #include "cJSON.h"
 #include "esp_log.h"
 #include "esp_system.h"

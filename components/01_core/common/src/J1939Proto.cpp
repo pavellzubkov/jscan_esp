@@ -1,4 +1,4 @@
-#include "J1939Proto.h"
+#include "J1939Proto.hpp"
 
 // =======================
 // CRC16-CCITT (FALSE) — табличный

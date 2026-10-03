@@ -1,6 +1,6 @@
-#include "TwaiDriver.h"
+#include "TwaiDriver.hpp"
 
-#include "RaiiGuards.h"
+#include "RaiiGuards.hpp"
 #include "esp_log.h"
 #include "esp_twai.h"
 #include "esp_twai_onchip.h"
@@ -10,7 +10,7 @@
 static const char* TAG = "TwaiDriver";
 
 // Слот приёма: буфер данных + фрейм, заполняемый в ISR-колбэке.
-// Определение вложенного типа (объявлен в TwaiDriver.h как RxSlot).
+// Определение вложенного типа (объявлен в TwaiDriver.hpp как RxSlot).
 struct TwaiDriver::RxSlot {
     twai_frame_t frame;
     uint8_t      data[TWAI_FRAME_MAX_LEN];
@@ -216,7 +216,7 @@ esp_err_t TwaiDriver::transmit(uint32_t id, const uint8_t* data, uint8_t dlc,
         return ESP_ERR_INVALID_STATE;
 
     // RAII-гарантия возврата мьютекса на всех путях возврата
-    // (общий примитив из RaiiGuards.h — как и прежний локальный TxLock)
+    // (общий примитив из RaiiGuards.hpp — как и прежний локальный TxLock)
     LockGuard lock(txMux_);
 
     // Узел простаивает → ни один TX-блок больше не нужен драйверу

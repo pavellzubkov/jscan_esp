@@ -1,7 +1,7 @@
 #include "J1939Channel.hpp"
 
 #include "FrameTx.hpp"
-#include "J1939Proto.h"
+#include "J1939Proto.hpp"
 #include "esp_log.h"
 
 namespace {

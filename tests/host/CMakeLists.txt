@@ -26,7 +26,7 @@ target_include_directories(host_tests PRIVATE
     ${HOST_TEST_DIR}/stubs          # esp_log.h / driver/gpio.h — заглушки вместо IDF
     ${COMMON_DIR}/include
     ${COMMON_DIR}/include/fields
-    ${TWAI_DIR}/include             # TwaiDriver.h — только типы (RxFrame), .cpp не входит
+    ${TWAI_DIR}/include             # TwaiDriver.hpp — только типы (RxFrame), .cpp не входит
     ${J1939_DIR}/include
 )
 

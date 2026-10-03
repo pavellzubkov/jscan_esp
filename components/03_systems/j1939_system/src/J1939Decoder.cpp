@@ -1,4 +1,4 @@
-#include "J1939Decoder.h"
+#include "J1939Decoder.hpp"
 
 bool J1939Decoder::peerToPeer(uint32_t pgn)
 {

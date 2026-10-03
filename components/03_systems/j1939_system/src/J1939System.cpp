@@ -1,8 +1,8 @@
-#include "J1939System.h"
+#include "J1939System.hpp"
 
-#include "HardwareConfig.h"
-#include "LogicUtils.h"
-#include "SystemTiming.h"
+#include "HardwareConfig.hpp"
+#include "LogicUtils.hpp"
+#include "SystemTiming.hpp"
 #include "esp_log.h"
 #include <cstdlib>
 #include <cstring>

@@ -1,6 +1,6 @@
 #include "StaticHandler.hpp"
 #include "HttpCommon.hpp"
-#include "AppContext.h"
+#include "AppContext.hpp"
 #include "esp_log.h"
 #include "esp_vfs.h"
 #include <cstring>

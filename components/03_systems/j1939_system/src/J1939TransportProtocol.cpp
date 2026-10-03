@@ -1,5 +1,5 @@
-#include "J1939TransportProtocol.h"
-#include "SystemTiming.h"
+#include "J1939TransportProtocol.hpp"
+#include "SystemTiming.hpp"
 #include <cstring>
 #include <esp_log.h>
 

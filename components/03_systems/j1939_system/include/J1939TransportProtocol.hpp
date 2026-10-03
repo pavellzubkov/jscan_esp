@@ -1,6 +1,6 @@
 #pragma once
-#include "J1939Decoder.h"
-#include "J1939Proto.h"
+#include "J1939Decoder.hpp"
+#include "J1939Proto.hpp"
 #include <cstdint>
 
 // Собранное много-пакетное сообщение (до 1785 байт).

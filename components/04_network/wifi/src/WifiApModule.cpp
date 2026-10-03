@@ -1,7 +1,7 @@
 #include "WifiApModule.hpp"
 #include "simple_dns_server.hpp"
-#include "HardwareConfig.h"
-#include "LogicUtils.h"
+#include "HardwareConfig.hpp"
+#include "LogicUtils.hpp"
 #include "esp_log.h"
 #include <cstdio>
 #include <cstring>

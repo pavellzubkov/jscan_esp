@@ -3,14 +3,14 @@
 // Покрытие: J1939Proto, FieldRegistry, SnapshotAccumulator, Timing::computeWaitMs,
 // J1939TransportProtocol (BAM/RTS/CTS/EOM), J1939Decoder.
 
-#include "AppData.h"
-#include "ByteOrder.h"
-#include "FieldRegistry.h"
-#include "J1939Decoder.h"
-#include "J1939Proto.h"
-#include "J1939TransportProtocol.h"
-#include "SnapshotAccumulator.h"
-#include "SystemTiming.h"
+#include "AppData.hpp"
+#include "ByteOrder.hpp"
+#include "FieldRegistry.hpp"
+#include "J1939Decoder.hpp"
+#include "J1939Proto.hpp"
+#include "J1939TransportProtocol.hpp"
+#include "SnapshotAccumulator.hpp"
+#include "SystemTiming.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -181,7 +181,7 @@ static void test_field_registry() {
     CHECK(!reg.getByUid(FULL_ID, chBadUid));
 
     // Дефолты полей обязаны совпадать с константами Hw/Timing (единый
-    // источник литералов в HardwareConfig.h/SystemTiming.h).
+    // источник литералов в HardwareConfig.hpp/SystemTiming.hpp).
     uint8_t nodeAddr = 0;
     CHECK(reg.getByName("canNodeAddr", nodeAddr) &&
           nodeAddr == Hw::kDefaultNodeAddr);

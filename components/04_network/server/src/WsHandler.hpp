@@ -1,6 +1,6 @@
 #pragma once
 #include "esp_http_server.h"
-#include "AppContext.h"
+#include "AppContext.hpp"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/semphr.h"

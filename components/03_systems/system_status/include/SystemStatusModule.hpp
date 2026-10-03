@@ -1,5 +1,5 @@
 #pragma once
-#include "AppContext.h"
+#include "AppContext.hpp"
 
 // Системный статус (SYSTEM-домен): владелец полей fwVersion/uptimeMs/heapFree.
 // Периодических задач нет:

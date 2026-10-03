@@ -1,6 +1,6 @@
 #include "FrameTx.hpp"
 
-#include "J1939Proto.h"
+#include "J1939Proto.hpp"
 #include <cstdlib>
 #include <cstring>
 #include <memory>

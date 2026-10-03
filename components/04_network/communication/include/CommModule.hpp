@@ -1,9 +1,9 @@
 #pragma once
-#include "AppContext.h"
-#include "AppEvents.h"
+#include "AppContext.hpp"
+#include "AppEvents.hpp"
 #include "FrameTx.hpp"
 #include "J1939Channel.hpp"
-#include "J1939Proto.h"
+#include "J1939Proto.hpp"
 #include <cstdint>
 
 // Протокольный слой: кадр (magic/ver/flags/MsgType/len/seq/CRC), диспатч команд

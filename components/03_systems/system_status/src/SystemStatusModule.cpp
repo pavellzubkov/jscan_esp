@@ -1,6 +1,6 @@
-#include "SystemStatusModule.h"
+#include "SystemStatusModule.hpp"
 
-#include "HardwareConfig.h"
+#include "HardwareConfig.hpp"
 #include "esp_log.h"
 #include "esp_system.h"
 #include "esp_timer.h"

@@ -3,9 +3,9 @@
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
-#include "AppTypes.h"
-#include "HardwareConfig.h"
-#include "SystemTiming.h"   // дефолты SnapshotFields.inc (Timing::kSnapshot*)
+#include "AppTypes.hpp"
+#include "HardwareConfig.hpp"
+#include "SystemTiming.hpp"   // дефолты SnapshotFields.inc (Timing::kSnapshot*)
 
 // ================================================================
 // Реестр полей системы: доменные .inc-файлы включены явно, чтобы
