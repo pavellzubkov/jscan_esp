@@ -37,7 +37,6 @@ private:
     cJSON* buildFieldsJson();        // только isConfig-поля по meta.name
     bool applyFieldsJson(cJSON* root, bool trustedRestore,
                          bool* hadUnknown = nullptr);
-    size_t applyFieldsWithNotify(cJSON* fields);  // CONFIG_CHANGED + sendField
 
     void onConfigChanged(const field_change_event_t* evt);  // → dirty_ = true
     esp_err_t reset();       // factory reset: дефолты + unlink + esp_restart

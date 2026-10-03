@@ -54,7 +54,7 @@ wsl -d Ubuntu-22.04 -- bash -lc "cd /mnt/e/Projects/Embedded/ESP32/J1939_scaner/
 | 10 | TP до полноценного (RTS/CTS/EOM) + host-тесты | ☑ |
 | 11 | Ресурсы и крайние случаи (AppData/длины/UID) | ☑ |
 | 12 | Graceful shutdown задач (J1939/ConfigStore) | ☑ |
-| 13 | Гигиена: event base, мёртвый код, sdkconfig, тесты | ☐ |
+| 13 | Гигиена: event base, мёртвый код, sdkconfig, тесты | ☑ |
 | 14 | Расширяемость: таблицы, CFG_ENUM, домены, readLE | ☐ |
 
 **Не делаем (вне объёма, зафиксировано):** `.h`->`.hpp` ренейминг 22 файлов;
@@ -1073,7 +1073,7 @@ flash). Связано: `ConfigStore::reset()` делает `unlink` парал�
 
 ---
 
-## Шаг 13. Гигиена: event base, мёртвый код, sdkconfig, тесты
+## Шаг 13. Гигиена: event base, мёртвый код, sdkconfig, тесты ✔
 
 **Цель.** Закрыть ревью 4 (поддерживаемость) и 5 (синхронизация стандартов):
 `ESP_EVENT_DEFINE_BASE` в заголовке; мёртвый код; `pragma` на весь TU;

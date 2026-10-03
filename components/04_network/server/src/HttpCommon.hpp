@@ -12,15 +12,10 @@ inline constexpr const char *kStaticMountPath = "/littlefs";
 
 namespace status {
 inline constexpr const char *kOk                  = "200 OK";
-inline constexpr const char *kAccepted            = "202 Accepted";
 inline constexpr const char *kFound               = "302 Found";
-inline constexpr const char *kNotModified         = "304 Not Modified";
 inline constexpr const char *kBadRequest          = "400 Bad Request";
-inline constexpr const char *kNotFound            = "404 Not Found";
-inline constexpr const char *kMethodNotAllowed    = "405 Method Not Allowed";
 inline constexpr const char *kConflict            = "409 Conflict";
 inline constexpr const char *kInternalServerError = "500 Internal Server Error";
-inline constexpr const char *kServiceUnavailable  = "503 Service Unavailable";
 } // namespace status
 
 // Разрешить кросс-доменные запросы (web-UI обращается с другого origin).

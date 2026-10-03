@@ -7,7 +7,11 @@
 #include <cstdint>
 #include <type_traits>
 
-ESP_EVENT_DEFINE_BASE(APP_EVENTS_BASE);
+// Определение base — одно, в src/AppEvents.cpp (ESP_EVENT_DEFINE_BASE).
+// В заголовке — только DECLARE: define в .h давал бы своё определение в
+// каждом TU (в C++ const имеет внутреннюю связь), а esp_event сравнивает
+// base по УКАЗАТЕЛЮ — рассинхрон адресов молча ломал бы доставку событий.
+ESP_EVENT_DECLARE_BASE(APP_EVENTS_BASE);
 
 enum class app_event_id_t : int32_t {
     J1939_SNAPSHOT_SEND,    // данные: j1939_snapshot_t (postSized), байты батча

@@ -1,5 +1,6 @@
 idf_component_register(
-    SRCS "src/BootManager.cpp"
+    SRCS "src/AppEvents.cpp"
+         "src/BootManager.cpp"
          "src/J1939Proto.cpp"
          "src/FieldRegistry.cpp"
     INCLUDE_DIRS "include"

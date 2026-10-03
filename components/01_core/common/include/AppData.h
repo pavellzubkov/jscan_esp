@@ -165,40 +165,6 @@ inline constexpr size_t kAppSerializeDataMax = computeSerializeDataMax();
 
 #undef DATA_FIELD
 
-// ---------------------------------------------------------------
-// Вспомогательные функции
-// ---------------------------------------------------------------
-inline const FieldMeta* findField(const char* name) {
-    if (!name) return nullptr;
-    for (size_t i = 0; i < kAppFieldCount; ++i) {
-        if (strcmp(g_fieldMeta[i].name, name) == 0) {
-            return &g_fieldMeta[i];
-        }
-    }
-    return nullptr;
-}
-
-inline void* getFieldPtr(AppData& data, const char* name) {
-    const FieldMeta* meta = findField(name);
-    if (!meta) return nullptr;
-    return reinterpret_cast<uint8_t*>(&data) + meta->offset;
-}
-
-// ---------------------------------------------------------------
-// Type-safe getter (опционально, для удобства)
-// ---------------------------------------------------------------
-template<typename T>
-inline T* getFieldAs(AppData& data, const char* name) {
-    const FieldMeta* meta = findField(name);
-    if (!meta || meta->size != sizeof(T)) return nullptr;
-    return static_cast<T*>(getFieldPtr(data, name));
-}
-
-template<typename T>
-inline const T* getFieldAs(const AppData& data, const char* name) {
-    const FieldMeta* meta = findField(name);
-    if (!meta || meta->size != sizeof(T)) return nullptr;
-    return static_cast<const T*>(
-        reinterpret_cast<const uint8_t*>(&data) + meta->offset
-    );
-}
+// Примечание: поиск поля по имени/указателю доступен через FieldRegistry
+// (getMetaByName/getByUid) — локальные findField/getFieldPtr/getFieldAs
+// удалены как мёртвый код без синхронизации (ARCH_FIX2, шаг 13).

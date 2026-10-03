@@ -365,23 +365,6 @@ bool ConfigStore::applyFieldsJson(cJSON* root, bool trustedRestore,
     return applyFieldsToCtx(ctx_, root, nullptr, trustedRestore, hadUnknown);
 }
 
-// Применить поля и уведомить систему (CONFIG_CHANGED + PUSH) только для
-// реально изменившихся полей. Возвращает число изменённых полей.
-// Вызывается из протокола (CommModule, STEP-03): запись извне — readonly-поля
-// отклоняются (FieldDomain::PROTOCOL).
-size_t ConfigStore::applyFieldsWithNotify(cJSON* fields) {
-    if (!fields) return 0;
-
-    std::vector<uint16_t> changed;
-    applyFieldsToCtx(ctx_, fields, &changed, false);
-
-    for (uint16_t uid : changed) {
-        postFieldChanged(ctx_, uid);
-        sendField(ctx_, uid);
-    }
-    return changed.size();
-}
-
 void ConfigStore::saveToFs() {
     // Сброс dirty_ ДО сборки JSON: изменение, пришедшее во время записи,
     // снова поставит флаг → автосейв повторится. Сброс после записи терял

@@ -11,11 +11,17 @@ set(EXTRA_COMPONENT_DIRS
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(JScaner)
 
-# Автоматическая упаковка OTA-архива после успешной сборки
+# Автоматическая упаковка OTA-архива после успешной сборки.
+# OUTPUT+custom_target (вместо голого POST_BUILD): так задаётся DEPENDS от
+# скрипта упаковки — правка scripts/package_ota.py пересобирает update.zip.
 idf_build_get_property(build_dir BUILD_DIR)
+set(OTA_SCRIPT ${CMAKE_CURRENT_LIST_DIR}/scripts/package_ota.py)
+set(OTA_ZIP ${build_dir}/update.zip)
 add_custom_command(
-    TARGET app
-    POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E env python ${CMAKE_CURRENT_LIST_DIR}/scripts/package_ota.py ${build_dir}
+    OUTPUT ${OTA_ZIP}
+    COMMAND ${CMAKE_COMMAND} -E env python ${OTA_SCRIPT} ${build_dir}
     COMMENT "Packaging OTA update archive (update.zip)"
+    DEPENDS ${OTA_SCRIPT} app
+    VERBATIM
 )
+add_custom_target(package_ota ALL DEPENDS ${OTA_ZIP})
