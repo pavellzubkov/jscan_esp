@@ -4,10 +4,10 @@
 DATA_FIELD(uint8_t,     canNodeAddr,      Hw::kDefaultNodeAddr, 0, 253, CFG_UINT, true, false)
 
 // @label Битрейт CAN
-// @description Битрейт шины (125000/250000/500000/1000000); применяется при перезагрузке
+// @description Битрейт шины из списка Hw::kAllowedBitrates (125000/250000/500000/1000000); применяется при перезагрузке
 // @group TWAI
 // @unit bps
-DATA_FIELD(uint32_t,    canBitrate,       Hw::kCanBitrate, 125000, 1000000, CFG_UINT, true, false)
+DATA_FIELD(uint32_t,    canBitrate,       Hw::kCanBitrate, 125000, 1000000, CFG_ENUM, true, false)
 
 // @label Таймаут TX
 // @description Таймаут передачи кадра CAN

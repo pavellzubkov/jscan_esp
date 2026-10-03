@@ -12,11 +12,12 @@ constexpr gpio_num_t kCanRxGpio = GPIO_NUM_4;
 // конфигурируемое поле canBitrate (AppData), применяется при перезагрузке.
 constexpr uint32_t kCanBitrate = 250000;
 // Набор допустимых битрейтов TWAI (поле canBitrate): единственный источник
-// списка — валидация конфига в J1939System, а не дубли в каждом call site.
+// списка — валидация конфига в J1939System и членство CFG_ENUM в
+// FieldRegistry (kEnumLists), а не дубли в каждом call site.
+constexpr uint32_t kAllowedBitrates[] = {125000, 250000, 500000, 1000000};
 constexpr bool isValidBitrate(uint32_t br)
 {
-    constexpr uint32_t kAllowed[] = {125000, 250000, 500000, 1000000};
-    for (uint32_t b : kAllowed)
+    for (uint32_t b : kAllowedBitrates)
         if (b == br) return true;
     return false;
 }

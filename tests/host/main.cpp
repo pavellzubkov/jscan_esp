@@ -215,6 +215,15 @@ static void test_field_registry() {
                          FieldDomain::PROTOCOL) ==
           FieldWriteStatus::OUT_OF_RANGE);
 
+    // CFG_ENUM (canBitrate): членство в Hw::kAllowedBitrates — сверх диапазона.
+    const uint32_t brInGap = 125001;   // в 125000..1000000, но вне списка
+    CHECK(reg.writeField(canBitrate_UID, &brInGap, sizeof(brInGap),
+                         FieldDomain::PROTOCOL) ==
+          FieldWriteStatus::OUT_OF_RANGE);
+    const uint32_t brInList = 250000;  // в списке — принимается
+    CHECK(reg.writeField(canBitrate_UID, &brInList, sizeof(brInList),
+                         FieldDomain::PROTOCOL) == FieldWriteStatus::OK);
+
     // Диапазоны: apChannel вне [1,11].
     const uint8_t chBad = 20;
     CHECK(reg.writeField(apChannel_UID, &chBad, 1, FieldDomain::PROTOCOL) ==

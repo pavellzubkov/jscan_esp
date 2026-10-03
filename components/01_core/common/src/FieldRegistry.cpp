@@ -67,6 +67,15 @@ static bool isValidIpv4(const char* s, size_t len) {
     return octets == 4;
 }
 
+// Списки разрешённых значений для CFG_ENUM (uid -> массив). Поля без записи
+// здесь проверяются только диапазоном min..max (как раньше) — совместимость.
+// Приватна для слоя 01: wire/ConfigStore/генератор схемы не зависят от неё.
+struct EnumList { uint16_t uid; const uint32_t* values; size_t count; };
+static constexpr EnumList kEnumLists[] = {
+    { canBitrate_UID, Hw::kAllowedBitrates,
+      sizeof(Hw::kAllowedBitrates) / sizeof(uint32_t) },
+};
+
 static bool valueInRange(const FieldMeta* meta, const uint8_t* payload, size_t payloadLen,
                          double minVal, double maxVal) {
     if (meta->validator == CFG_STRING || meta->validator == CFG_IP ||
@@ -96,7 +105,19 @@ static bool valueInRange(const FieldMeta* meta, const uint8_t* payload, size_t p
     double v = (meta->validator == CFG_INT)
                    ? static_cast<double>(readSignedLE(payload, meta->size))
                    : static_cast<double>(readUnsignedLE(payload, meta->size));
-    return (v >= minVal) && (v <= maxVal);
+    if ((v < minVal) || (v > maxVal)) return false;
+    // CFG_ENUM: после диапазона — членство в списке uid->kEnumLists
+    // (canBitrate: 125001 в диапазоне, но вне списка -> отказ).
+    if (meta->validator == CFG_ENUM) {
+        for (const EnumList& e : kEnumLists) {
+            if (e.uid != meta->uid) continue;
+            const uint32_t u = static_cast<uint32_t>(v);
+            for (size_t i = 0; i < e.count; ++i)
+                if (e.values[i] == u) return true;
+            return false;   // в диапазоне, но не в списке
+        }
+    }
+    return true;   // нет записи в kEnumLists -> только диапазон (как раньше)
 }
 
 static bool deserializeField(const FieldMeta* meta, AppData* data,
