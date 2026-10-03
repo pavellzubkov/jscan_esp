@@ -1,4 +1,5 @@
 #include "J1939TransportProtocol.hpp"
+#include "HardwareConfig.hpp"
 #include "SystemTiming.hpp"
 #include <cstring>
 #include <esp_log.h>
@@ -220,6 +221,42 @@ bool J1939TransportProtocol::onTpDt(const J1939PgnMsg& msg, uint32_t nowMs,
         return false;
     }
     return false;
+}
+
+bool J1939TransportProtocol::buildCmPayload(const TpAction& act, uint8_t out[8])
+{
+    // Reserved-байты 0xFF по спецификации (SAE J1939-21).
+    std::memset(out, 0xFF, 8);
+    switch (act.kind)
+    {
+    case TpAction::Kind::SendCts:
+        // CTS: [17, packets-we-can-receive, 0xFF(max), 0xFF, 0xFF, PGN LE]
+        out[0] = kCmCts;
+        out[1] = act.packets;
+        break;
+    case TpAction::Kind::SendEom:
+        // EOM: [19, size LE, total packets, 0xFF, 0xFF, PGN LE]
+        out[0] = kCmEom;
+        out[1] = static_cast<uint8_t>(act.totalLen & 0xFF);
+        out[2] = static_cast<uint8_t>((act.totalLen >> 8) & 0xFF);
+        out[3] = act.totalPackets;
+        break;
+    case TpAction::Kind::None:
+    default:
+        return false;   // отправлять нечего — кадр не формируется
+    }
+    out[5] = static_cast<uint8_t>(act.pgn & 0xFF);
+    out[6] = static_cast<uint8_t>((act.pgn >> 8) & 0xFF);
+    out[7] = static_cast<uint8_t>((act.pgn >> 16) & 0xFF);
+    return true;
+}
+
+uint32_t J1939TransportProtocol::buildCmId(const TpAction& act, uint8_t nodeAddr)
+{
+    // TP.CM — PDU1 (PF=0xEC): ID = prio<<26 | PGN<<8 (биты PF) |
+    // PS(=dst)<<8 | SA(=nodeAddr); младшие 8 бит kPgnTpCm (PS) = 0.
+    return (7u << 26) | (Hw::kPgnTpCm << 8) |
+           (static_cast<uint32_t>(act.dst) << 8) | nodeAddr;
 }
 
 void J1939TransportProtocol::tick(uint32_t nowMs)

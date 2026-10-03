@@ -424,38 +424,16 @@ void J1939System::processFrame(const TwaiDriver::RxFrame& frame, uint32_t nowMs)
 
 void J1939System::sendTpAction(const TpAction& act)
 {
-    if (act.kind == TpAction::Kind::None)
-        return;
-
-    // TP.CM (PDU1): ID = prio<<26 | PF<<8 | PS(=dst) | SA. По SAE приоритет
-    // TP.CM — 7. Буфер: reserved-байты 0xFF по спецификации.
+    // Сериализация TP.CM (CTS/EOM) вынесена в J1939TransportProtocol —
+    // слой 03 в host-сборке, байты payload и ID покрыты тестами.
+    // false — Kind::None: кадр не отправляем.
     uint8_t buf[8];
-    std::memset(buf, 0xFF, sizeof(buf));
-    switch (act.kind)
-    {
-    case TpAction::Kind::SendCts:
-        // CTS: [17, packets-we-can-receive, 0xFF(max), 0xFF, 0xFF, PGN LE]
-        buf[0] = 17;
-        buf[1] = act.packets;
-        break;
-    case TpAction::Kind::SendEom:
-        // EOM: [19, size LE, total packets, 0xFF, PGN LE]
-        buf[0] = 19;
-        buf[1] = static_cast<uint8_t>(act.totalLen & 0xFF);
-        buf[2] = static_cast<uint8_t>((act.totalLen >> 8) & 0xFF);
-        buf[3] = act.totalPackets;
-        break;
-    default:
+    if (!J1939TransportProtocol::buildCmPayload(act, buf))
         return;
-    }
-    buf[5] = static_cast<uint8_t>(act.pgn & 0xFF);
-    buf[6] = static_cast<uint8_t>((act.pgn >> 8) & 0xFF);
-    buf[7] = static_cast<uint8_t>((act.pgn >> 16) & 0xFF);
 
     uint8_t nodeAddr = Hw::kDefaultNodeAddr;
     ctx_->fields.getByUid(canNodeAddr_UID, nodeAddr);
-    uint32_t id = (7u << 26) | (Hw::kPgnTpCm << 8) | nodeAddr;
-    id = (id & 0xFFFF00FFu) | (static_cast<uint32_t>(act.dst) << 8);
+    const uint32_t id = J1939TransportProtocol::buildCmId(act, nodeAddr);
 
     // timeout=0: «кадр поставлен в очередь драйвера» = успех — задача приёма
     // не ждёт завершения TX (как RQST, см. sendRequest).

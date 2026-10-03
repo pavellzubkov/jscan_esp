@@ -60,6 +60,15 @@ public:
     // Звать из taskLoop: DT могли прекратиться полностью.
     void tick(uint32_t nowMs);
 
+    // Сериализация ответного TP.CM в 8 байт payload (вынесена из
+    // J1939System::sendTpAction — слой 03 в host-сборке, байты тестируемы).
+    // false — Kind::None: кадр формировать не из чего, отправлять нечего.
+    static bool buildCmPayload(const TpAction& act, uint8_t out[8]);
+
+    // CAN ID ответного TP.CM: приоритет 7, PGN TP.CM (PDU1), PS = act.dst,
+    // SA = nodeAddr (адрес узла из canNodeAddr).
+    static uint32_t buildCmId(const TpAction& act, uint8_t nodeAddr);
+
 private:
     // Контрол-байты TP.CM (SAE J1939-21).
     static constexpr uint8_t kCmRts   = 16;

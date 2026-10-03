@@ -692,6 +692,56 @@ static void test_transport_protocol() {
     CHECK(!tp.onTpDt(tiny, 10, out, &act));
 }
 
+// ============================================================
+// J1939TransportProtocol: сериализация ответного TP.CM (CTS/EOM)
+// ============================================================
+static void test_tp_cm_build() {
+    uint8_t buf[8];
+
+    // Kind::None → кадр не формируется (sendTpAction не вызывает transmit).
+    TpAction none;
+    CHECK(none.kind == TpAction::Kind::None);
+    CHECK(!J1939TransportProtocol::buildCmPayload(none, buf));
+
+    // CTS: [17, packets, 0xFF, 0xFF, 0xFF, PGN LE].
+    TpAction cts;
+    cts.kind = TpAction::Kind::SendCts;
+    cts.dst = 0x30;
+    cts.packets = 2;
+    cts.totalLen = 14;
+    cts.totalPackets = 2;
+    cts.pgn = 0x123456;
+    CHECK(J1939TransportProtocol::buildCmPayload(cts, buf));
+    const uint8_t kCts[8] = {17, 2, 0xFF, 0xFF, 0xFF, 0x56, 0x34, 0x12};
+    for (int i = 0; i < 8; ++i)
+        CHECK(buf[i] == kCts[i]);
+
+    // ID: приоритет 7, PGN TP.CM (0xEC00), PS = act.dst, SA = узел.
+    uint32_t id = J1939TransportProtocol::buildCmId(cts, 25);
+    CHECK(((id >> 26) & 0x07) == 7);           // приоритет по SAE
+    const uint32_t pgnRaw = (id >> 8) & 0x3FFFFu;  // PGN-поле, как его извлекает декодер
+    CHECK(pgnRaw == 0xEC30);                   // PF=0xEC (TP.CM), PS=dst
+    CHECK((pgnRaw & 0x3FFF00u) == 0xEC00);     // чистый PGN у получателя (PDU1)
+    CHECK((id & 0xFF) == 25);                  // SA узла
+    CHECK(id == ((7u << 26) | (60416u << 8) | (0x30u << 8) | 25u));
+
+    // EOM: [19, len LE, packets, 0xFF, 0xFF, PGN LE].
+    TpAction eom;
+    eom.kind = TpAction::Kind::SendEom;
+    eom.dst = 0x30;
+    eom.totalLen = 14;
+    eom.totalPackets = 2;
+    eom.pgn = 0xABCDEF;
+    CHECK(J1939TransportProtocol::buildCmPayload(eom, buf));
+    const uint8_t kEom[8] = {19, 14, 0, 2, 0xFF, 0xEF, 0xCD, 0xAB};
+    for (int i = 0; i < 8; ++i)
+        CHECK(buf[i] == kEom[i]);
+
+    id = J1939TransportProtocol::buildCmId(eom, 25);
+    CHECK(((id >> 8) & 0xFF) == 0x30);          // act.dst в PS
+    CHECK((id & 0xFF) == 25);
+}
+
 int main() {
     test_proto();
     test_field_registry();
@@ -699,6 +749,7 @@ int main() {
     test_timing();
     test_decoder();
     test_transport_protocol();
+    test_tp_cm_build();
 
     std::printf("checks=%d failures=%d\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;
