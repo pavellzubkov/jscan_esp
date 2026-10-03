@@ -7,6 +7,7 @@
 #include "ByteOrder.hpp"
 #include "FieldRegistry.hpp"
 #include "J1939Decoder.hpp"
+#include "J1939MsgChannel.hpp"
 #include "J1939Proto.hpp"
 #include "J1939TransportProtocol.hpp"
 #include "SnapshotAccumulator.hpp"
@@ -742,6 +743,126 @@ static void test_tp_cm_build() {
     CHECK((id & 0xFF) == 25);
 }
 
+// ============================================================
+// J1939MsgChannel (SPSC-канал J1939System -> J1939Scanner)
+// ============================================================
+static void test_j1939_msg_channel() {
+    // ---------- roundtrip inline: len <= 8, bigData == nullptr ----------
+    {
+        J1939MsgChannel ch;
+        ch.setConsumer(true);
+        j1939_msg_t m{};
+        m.tsMs = 100;
+        m.pgn = 0xF004;
+        m.len = 8;
+        m.sa = 0x19;
+        for (int i = 0; i < 8; ++i)
+            m.smallData[i] = static_cast<uint8_t>(i + 1);
+        m.bigData = nullptr;
+        CHECK(ch.push(m));
+        CHECK(ch.consumerActive());
+        CHECK(ch.drops() == 0);
+
+        j1939_msg_t out{};
+        CHECK(ch.pop(&out, 0));
+        CHECK(out.tsMs == 100 && out.pgn == 0xF004 && out.len == 8 && out.sa == 0x19);
+        CHECK(out.bigData == nullptr);
+        CHECK(out.data() == out.smallData);
+        CHECK(std::memcmp(out.data(), m.smallData, 8) == 0);
+        // Очередь пуста: pop с ненулевым waitMs не блокируется (стаб) -> false.
+        CHECK(!ch.pop(&out, 50));
+    }
+
+    // ---------- roundtrip len > 8: буфер переходит через pop, free в тесте ----
+    {
+        J1939MsgChannel ch;
+        ch.setConsumer(true);
+        uint8_t big[100];
+        std::memset(big, 0xAB, sizeof(big));
+        j1939_msg_t m{};
+        m.tsMs = 7;
+        m.pgn = 0xCBFF;
+        m.len = 100;
+        m.sa = 0x10;
+        m.bigData = static_cast<uint8_t*>(std::malloc(sizeof(big)));
+        std::memcpy(m.bigData, big, sizeof(big));
+        CHECK(ch.push(m));   // канал забрал владение буфером
+        CHECK(ch.drops() == 0);
+
+        j1939_msg_t out{};
+        CHECK(ch.pop(&out, 0));
+        CHECK(out.len == 100 && out.bigData != nullptr);
+        CHECK(out.data() != out.smallData);
+        CHECK(std::memcmp(out.data(), big, sizeof(big)) == 0);
+        std::free(out.bigData);   // владение у потребителя
+    }
+
+    // ---------- setConsumer(false) -> push == false, drops_++ ----------
+    {
+        J1939MsgChannel ch;
+        j1939_msg_t m{};
+        m.len = 4;
+        m.pgn = 0x100;
+        m.bigData = static_cast<uint8_t*>(std::malloc(16));   // канал освобождает
+        CHECK(!ch.push(m));
+        CHECK(ch.drops() == 1);
+        m.bigData = nullptr;   // контракт: после push продьютер буфер не трогает
+        j1939_msg_t out{};
+        CHECK(!ch.pop(&out, 0));       // в очередь ничего не легло
+    }
+
+    // ---------- overflow: 33-й push -> дроп + счётчик, первые 32 не искажены --
+    {
+        J1939MsgChannel ch;
+        ch.setConsumer(true);
+        for (uint32_t i = 0; i < J1939MsgChannel::kDepth; ++i) {
+            j1939_msg_t m{};
+            m.tsMs = 1000 + i;
+            m.pgn = 0x1000 + i;
+            m.len = 4;
+            m.sa = static_cast<uint8_t>(i);
+            m.smallData[0] = static_cast<uint8_t>(i);
+            m.smallData[3] = static_cast<uint8_t>(~i);
+            CHECK(ch.push(m));
+        }
+        CHECK(ch.drops() == 0);
+
+        j1939_msg_t extra{};
+        extra.pgn = 0xDEAD;
+        extra.len = 4;
+        extra.bigData = static_cast<uint8_t*>(std::malloc(16));  // канал освободит
+        CHECK(!ch.push(extra));            // 33-й: очередь полна -> дроп
+        CHECK(ch.drops() == 1);
+
+        for (uint32_t i = 0; i < J1939MsgChannel::kDepth; ++i) {
+            j1939_msg_t out{};
+            CHECK(ch.pop(&out, 0));
+            CHECK(out.pgn == 0x1000 + i);
+            CHECK(out.tsMs == 1000 + i);
+            CHECK(out.sa == static_cast<uint8_t>(i));
+            CHECK(out.smallData[0] == static_cast<uint8_t>(i));
+            CHECK(out.smallData[3] == static_cast<uint8_t>(~i));
+        }
+        j1939_msg_t empty{};
+        CHECK(!ch.pop(&empty, 0));
+    }
+
+    // ---------- drain в dtor: недочитанные bigData не текут, падений нет -----
+    {
+        auto* ch = new J1939MsgChannel();
+        ch->setConsumer(true);
+        for (int i = 0; i < 5; ++i) {
+            j1939_msg_t m{};
+            m.pgn = 0x2000 + static_cast<uint32_t>(i);
+            m.len = 32;
+            m.bigData = static_cast<uint8_t*>(std::malloc(32));  // не читаем —
+            std::memset(m.bigData, static_cast<uint8_t>(i), 32); // free в dtor
+            CHECK(ch->push(m));
+        }
+        delete ch;   // drain() + vQueueDelete()
+    }
+}
+
 int main() {
     test_proto();
     test_field_registry();
@@ -750,6 +871,7 @@ int main() {
     test_decoder();
     test_transport_protocol();
     test_tp_cm_build();
+    test_j1939_msg_channel();
 
     std::printf("checks=%d failures=%d\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;
