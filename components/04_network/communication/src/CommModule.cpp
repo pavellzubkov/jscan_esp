@@ -1,6 +1,7 @@
 #include "CommModule.h"
 
 #include "AppData.h"
+#include "ByteOrder.h"
 #include "FieldRegistry.h"
 #include "J1939Proto.h"
 #include "LogicUtils.h"
@@ -83,92 +84,84 @@ void CommunicationModule::onIncomingPacket(const ws_message_t* msg)
         return;
     }
 
-    switch (msgType)
+    // Диспатч по таблице kCmds: валидация длины payload (minLen/exact) —
+    // в одном месте, без ручных проверок в каждом обработчике.
+    for (const CmdDesc& c : kCmds)
     {
-    case J1939Proto::kMsgTypeRequest:
-    {
-        // J1939-ветка протокола — в подмодуле (парсинг + post J1939_REQUEST).
-        j1939_.onClientRequest(payload, payloadLen);
-        break;
-    }
-    case J1939Proto::kMsgTypeParamRequest:
-    {
-        // {uid u16 LE} — клиент запрашивает значение поля.
-        if (payloadLen != 2)
+        if (c.type != msgType)
+            continue;
+        if (payloadLen < c.minLen || (c.exact && payloadLen != c.minLen))
         {
-            ESP_LOGW(TAG, "PARAM_REQUEST payload wrong size (%u B)",
-                     (unsigned)payloadLen);
+            ESP_LOGW(TAG, "MsgType 0x%04X payload wrong size (%u B, expected %s%u)",
+                     msgType, (unsigned)payloadLen,
+                     c.exact ? "exactly " : "at least ", (unsigned)c.minLen);
             return;
         }
-        const uint16_t uid = static_cast<uint16_t>(payload[0]) |
-                             (static_cast<uint16_t>(payload[1]) << 8);
-        if (!ctx_->fields.getMetaByUid(uid))
-        {
-            sendNack(uid, 0, msg->sockfd);   // 0 = unknown
-            break;
-        }
-        sendValueFrame(J1939Proto::kMsgTypeParamAck, uid, msg->sockfd);
-        break;
+        (this->*c.fn)(payload, payloadLen, msg->sockfd);
+        return;
     }
-    case J1939Proto::kMsgTypeParamSet:
+    ESP_LOGW(TAG, "unknown MsgType 0x%04X", msgType);
+}
+
+// J1939-ветка протокола — в подмодуле (парсинг + post J1939_REQUEST).
+void CommunicationModule::onCmdJ1939Request(const uint8_t* payload, size_t len,
+                                             int /*sockfd*/)
+{
+    j1939_.onClientRequest(payload, len);
+}
+
+// {uid u16 LE} — клиент запрашивает значение поля (длина ровно 2, см. kCmds).
+void CommunicationModule::onCmdParamRequest(const uint8_t* payload, size_t /*len*/,
+                                             int sockfd)
+{
+    const uint16_t uid = readU16LE(payload);
+    if (!ctx_->fields.getMetaByUid(uid))
     {
-        // {uid u16 LE, value} — запись поля по протоколу (только config-поля).
-        if (payloadLen < 2)
-        {
-            ESP_LOGW(TAG, "PARAM_SET payload too short (%u B)",
-                     (unsigned)payloadLen);
-            return;
-        }
-        const uint16_t uid = static_cast<uint16_t>(payload[0]) |
-                             (static_cast<uint16_t>(payload[1]) << 8);
-        const FieldMeta* meta = ctx_->fields.getMetaByUid(uid);
-        if (!meta)
-        {
-            sendNack(uid, 0, msg->sockfd);   // 0 = unknown
-            break;
-        }
-        if (payloadLen == 2)
-        {
-            sendNack(uid, 3, msg->sockfd);   // 3 = len (нет значения)
-            break;
-        }
-
-        uint8_t oldBuf[kAppMaxFieldSize + 8];
-        size_t oldLen = 0;
-        ctx_->fields.readField(uid, oldBuf, sizeof(oldBuf), &oldLen);
-
-        const FieldWriteStatus st = ctx_->fields.writeField(
-            uid, payload + 2, payloadLen - 2, FieldDomain::PROTOCOL);
-        if (st != FieldWriteStatus::OK)
-        {
-            sendNack(uid, nackCodeFromStatus(st), msg->sockfd);
-            break;
-        }
-
-        uint8_t newBuf[kAppMaxFieldSize + 8];
-        size_t newLen = 0;
-        ctx_->fields.readField(uid, newBuf, sizeof(newBuf), &newLen);
-        const bool changed = (oldLen != newLen) ||
-                             memcmp(oldBuf, newBuf, oldLen) != 0;
-
-        if (changed)
-        {
-            postFieldChanged(ctx_, uid);     // автосейв конфига
-            sendValueFrame(J1939Proto::kMsgTypeParamPush, uid, -1);  // broadcast
-        }
-        sendValueFrame(J1939Proto::kMsgTypeParamAck, uid, msg->sockfd);
-        break;
+        sendNack(uid, 0, sockfd);   // 0 = unknown
+        return;
     }
-    case J1939Proto::kMsgTypeFactoryReset:
+    sendValueFrame(J1939Proto::kMsgTypeParamAck, uid, sockfd);
+}
+
+// {uid u16 LE, value} — запись поля по протоколу (только config-поля).
+void CommunicationModule::onCmdParamSet(const uint8_t* payload, size_t len,
+                                        int sockfd)
+{
+    const uint16_t uid = readU16LE(payload);
+    const FieldMeta* meta = ctx_->fields.getMetaByUid(uid);
+    if (!meta)
     {
-        ESP_LOGW(TAG, "FACTORY_RESET requested by WS client %d", msg->sockfd);
-        postEvent<app_event_id_t::FACTORY_RESET>(ctx_->events);
-        break;
+        sendNack(uid, 0, sockfd);   // 0 = unknown
+        return;
     }
-    default:
-        ESP_LOGW(TAG, "unknown MsgType 0x%04X", msgType);
-        break;
+    if (len == 2)
+    {
+        sendNack(uid, 3, sockfd);   // 3 = len (нет значения)
+        return;
     }
+
+    bool changed = false;
+    const FieldWriteStatus st = ctx_->fields.writeFieldDetectChange(
+        uid, payload + 2, len - 2, FieldDomain::PROTOCOL, &changed);
+    if (st != FieldWriteStatus::OK)
+    {
+        sendNack(uid, nackCodeFromStatus(st), sockfd);
+        return;
+    }
+
+    if (changed)
+    {
+        postFieldChanged(ctx_, uid);     // автосейв конфига
+        sendValueFrame(J1939Proto::kMsgTypeParamPush, uid, -1);  // broadcast
+    }
+    sendValueFrame(J1939Proto::kMsgTypeParamAck, uid, sockfd);
+}
+
+void CommunicationModule::onCmdFactoryReset(const uint8_t* /*payload*/,
+                                            size_t /*len*/, int sockfd)
+{
+    ESP_LOGW(TAG, "FACTORY_RESET requested by WS client %d", sockfd);
+    postEvent<app_event_id_t::FACTORY_RESET>(ctx_->events);
 }
 
 // Отправка значения поля: {uid u16 LE, value} в кадре заданного MsgType.
@@ -180,8 +173,7 @@ void CommunicationModule::sendValueFrame(uint16_t msgType, uint16_t uid,
         return;
 
     uint8_t payload[2 + kAppMaxFieldSize + 8];
-    payload[0] = static_cast<uint8_t>(uid & 0xFF);
-    payload[1] = static_cast<uint8_t>(uid >> 8);
+    writeU16LE(payload, uid);
     size_t vlen = 0;
     if (!ctx_->fields.readField(uid, payload + 2, sizeof(payload) - 2, &vlen))
         return;
@@ -192,8 +184,7 @@ void CommunicationModule::sendValueFrame(uint16_t msgType, uint16_t uid,
 void CommunicationModule::sendNack(uint16_t uid, uint8_t err, int sockfd)
 {
     uint8_t payload[3];
-    payload[0] = static_cast<uint8_t>(uid & 0xFF);
-    payload[1] = static_cast<uint8_t>(uid >> 8);
+    writeU16LE(payload, uid);
     payload[2] = err;
     tx_.send(J1939Proto::kMsgTypeParamNack, 0, payload, sizeof(payload),
              sockfd);

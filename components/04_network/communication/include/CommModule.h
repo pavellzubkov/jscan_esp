@@ -3,6 +3,7 @@
 #include "AppEvents.h"
 #include "FrameTx.hpp"
 #include "J1939Channel.hpp"
+#include "J1939Proto.h"
 #include <cstdint>
 
 // Протокольный слой: кадр (magic/ver/flags/MsgType/len/seq/CRC), диспатч команд
@@ -34,4 +35,31 @@ private:
     // --- Канал параметров ---
     void sendValueFrame(uint16_t msgType, uint16_t uid, int sockfd);
     void sendNack(uint16_t uid, uint8_t err, int sockfd);
+
+    // --- Обработчики команд протокола (таблица kCmds) ---
+    // Общая сигнатура под метод-указатель в таблице диспатча; валидация
+    // длины payload (minLen/exact) выполняется диспетчером до вызова.
+    void onCmdJ1939Request(const uint8_t* payload, size_t len, int sockfd);
+    void onCmdParamRequest(const uint8_t* payload, size_t len, int sockfd);
+    void onCmdParamSet(const uint8_t* payload, size_t len, int sockfd);
+    void onCmdFactoryReset(const uint8_t* payload, size_t len, int sockfd);
+
+    // Таблица команд протокола: MsgType -> валидация длины payload +
+    // обработчик. Вместо switch с ручными проверками в каждом case:
+    // minLen/exact проверяет диспетчер onIncomingPacket до вызова;
+    // порядок — как MsgType в PROTOCOL (0x0002..0x0008). Неизвестный
+    // MsgType — после перебора (бывший default). Член класса, т.к.
+    // таблица содержит указатели на приватные методы.
+    struct CmdDesc {
+        uint16_t type;
+        size_t   minLen;   // точная длина при exact, иначе нижняя граница
+        bool     exact;
+        void (CommunicationModule::*fn)(const uint8_t*, size_t, int);
+    };
+    static constexpr CmdDesc kCmds[] = {
+        {J1939Proto::kMsgTypeRequest,      5, false, &CommunicationModule::onCmdJ1939Request},
+        {J1939Proto::kMsgTypeParamRequest, 2, true,  &CommunicationModule::onCmdParamRequest},
+        {J1939Proto::kMsgTypeParamSet,     2, false, &CommunicationModule::onCmdParamSet},
+        {J1939Proto::kMsgTypeFactoryReset, 0, false, &CommunicationModule::onCmdFactoryReset},
+    };
 };

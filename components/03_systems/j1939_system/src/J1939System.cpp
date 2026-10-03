@@ -21,9 +21,6 @@ constexpr uint8_t  kTaskCore      = 0;   // ядро 0 безопасно для
 // Период публикации runtime-полей TWAI (twai*, activePgns).
 constexpr uint32_t kTelemetryPeriodMs = 1000;
 
-// Битрейт применяется драйвером TWAI только из этого набора (см. canBitrate).
-constexpr uint32_t kAllowedBitrates[] = {125000, 250000, 500000, 1000000};
-
 // Значения runtime-поля twaiState (TwaiFields.inc: «0=STOPPED 1=RUNNING
 // 2=BUS_OFF 3=RECOVERING») — вместо магических чисел в теле.
 enum TwaiStatePub : uint8_t {
@@ -32,13 +29,6 @@ enum TwaiStatePub : uint8_t {
     kStateBusOff    = 2,
     kStateRecovering = 3,
 };
-
-bool isValidBitrate(uint32_t br)
-{
-    for (uint32_t b : kAllowedBitrates)
-        if (b == br) return true;
-    return false;
-}
 
 // Ошибки TWAI драйвер считает в uint32_t, а поля twaiTxErr/twaiRxErr
 // описаны диапазоном 0..255 — усекаем, чтобы запись не ушла OUT_OF_RANGE.
@@ -110,7 +100,7 @@ esp_err_t J1939System::begin()
     cfg.rx = Hw::kCanRxGpio;
     if (!ctx_->fields.getByUid(canBitrate_UID, cfg.bitrate))
         cfg.bitrate = Hw::kCanBitrate;
-    if (!isValidBitrate(cfg.bitrate))
+    if (!Hw::isValidBitrate(cfg.bitrate))
     {
         ESP_LOGW(TAG, "canBitrate=%lu invalid (need 125000/250000/500000/1000000), using default 250000",
                  (unsigned long)cfg.bitrate);
@@ -265,7 +255,7 @@ void J1939System::onConfigChanged(const field_change_event_t* evt)
             ESP_LOGW(TAG, "read canBitrate failed, skipping apply");
             break;
         }
-        if (!isValidBitrate(br))
+        if (!Hw::isValidBitrate(br))
         {
             ESP_LOGW(TAG, "canBitrate=%lu invalid (need 125000/250000/500000/1000000), reverting to 250000",
                      (unsigned long)br);

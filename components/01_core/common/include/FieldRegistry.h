@@ -69,6 +69,16 @@ class FieldRegistry {
     FieldWriteStatus writeField(uint16_t uid, const void* value,
                                 size_t len, FieldDomain owner);
 
+    // Запись с детекцией изменения: читает старое значение, пишет, читает
+    // новое и сравнивает — всё под ОДНИМ внешним локом (mutex_ рекурсивный).
+    // Раньше call sites (CommModule/ConfigStore) делали read -> write -> read
+    // разными вызовами с разными локами — между ними мог вклиниться писатель
+    // и «изменение» определялось неверно. changed=false при отказе записи.
+    // changed может быть nullptr — тогда старое/новое не читается.
+    FieldWriteStatus writeFieldDetectChange(uint16_t uid, const void* value,
+                                            size_t len, FieldDomain owner,
+                                            bool* changed);
+
     // Запись строкового поля (CFG_STRING/CFG_IP/CFG_PASSWORD) из C-строки:
     // сама конструирует wire {len, bytes} и вызывает writeField с доменом
     // поля. Для FixedString вместо writeFieldScalar — тот передал бы сырые

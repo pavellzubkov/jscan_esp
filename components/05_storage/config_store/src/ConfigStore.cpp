@@ -1,5 +1,6 @@
 #include "ConfigStore.h"
 #include "AppData.h"
+#include "ByteOrder.h"   // readUnsignedLE/readSignedLE — общий с FieldRegistry
 #include "LogicUtils.h"
 #include "cJSON.h"
 #include "esp_log.h"
@@ -15,25 +16,6 @@
 #include <vector>
 
 static const char* TAG = "ConfigStore";
-
-// ============================================================
-// Вспомогательные функции (сериализация little-endian)
-// ============================================================
-
-static uint64_t readUnsignedLE(const uint8_t* p, size_t n) {
-    uint64_t v = 0;
-    for (size_t i = 0; i < n; ++i) v |= (uint64_t)p[i] << (8 * i);
-    return v;
-}
-
-static int64_t readSignedLE(const uint8_t* p, size_t n) {
-    uint64_t v = readUnsignedLE(p, n);
-    if (n < 8) {
-        bool neg = v & (uint64_t(1) << (8 * n - 1));
-        if (neg) v |= ~((uint64_t(1) << (8 * n)) - 1);
-    }
-    return static_cast<int64_t>(v);
-}
 
 // ============================================================
 // JSON-слой: значение JSON → wire (PROTOCOL §2) → FieldRegistry
@@ -125,29 +107,20 @@ static bool applyFieldsToCtx(AppContext* ctx, const cJSON* fields,
             continue;
         }
 
-        uint8_t oldBuf[kAppMaxFieldSize];
-        size_t oldLen = 0;
-        ctx->fields.readField(meta->uid, oldBuf, sizeof(oldBuf), &oldLen);
-
-        FieldWriteStatus st =
-            ctx->fields.writeField(meta->uid, wire, len,
-                                   trustedRestore ? meta->domain
-                                                  : FieldDomain::PROTOCOL);
+        // Запись с детекцией изменения — под одним локом (раньше read/write/
+        // read шли разными вызовами с разными локами — гонка между ними).
+        bool fieldChanged = false;
+        FieldWriteStatus st = ctx->fields.writeFieldDetectChange(
+            meta->uid, wire, len,
+            trustedRestore ? meta->domain : FieldDomain::PROTOCOL,
+            &fieldChanged);
         if (st != FieldWriteStatus::OK) {
             ESP_LOGW(TAG, "Field rejected on config apply: %s (status=%d)",
                      meta->name, static_cast<int>(st));
             continue;
         }
         anyApplied = true;
-
-        if (changed) {
-            uint8_t newBuf[kAppMaxFieldSize];
-            size_t newLen = 0;
-            ctx->fields.readField(meta->uid, newBuf, sizeof(newBuf), &newLen);
-            if (oldLen != newLen || memcmp(oldBuf, newBuf, oldLen) != 0) {
-                changed->push_back(meta->uid);
-            }
-        }
+        if (changed && fieldChanged) changed->push_back(meta->uid);
     }
     return anyApplied;
 }

@@ -64,47 +64,40 @@ static esp_err_t reg_one(httpd_handle_t server, const httpd_uri_t& uri) {
     return ret;
 }
 
+// Таблица OTA-эндпоинтов: добавление URI — одна строка (вместо копипасты
+// httpd_uri_t). Порядок регистрации сохраняет текущий (сверху вниз) и
+// обязан оставаться ДО wildcard-хендлера статики (см. ServerModule::begin).
+struct UriDesc {
+    const char* uri;
+    httpd_method_t method;
+    esp_err_t (*handler)(httpd_req_t*);
+};
+
+static constexpr UriDesc kOtaUris[] = {
+    {"/api/ota/status", HTTP_GET,  ota_status_get_handler},
+    {"/api/ota/storage", HTTP_POST, ota_storage_post_handler},
+    {"/api/ota/app",     HTTP_POST, ota_app_post_handler},
+};
+
 esp_err_t OtaApi::reg(httpd_handle_t server, OtaService* ota) {
     if (!server || !ota) {
         ESP_LOGE(TAG, "invalid args (server=%p ota=%p)", (void*)server, (void*)ota);
         return ESP_ERR_INVALID_ARG;
     }
 
-    httpd_uri_t ota_status_uri = {
-        .uri = "/api/ota/status",
-        .method = HTTP_GET,
-        .handler = ota_status_get_handler,
-        .user_ctx = ota,
-        .is_websocket = false,
-        .handle_ws_control_frames = false,
-        .supported_subprotocol = nullptr,
-    };
-    esp_err_t ret = reg_one(server, ota_status_uri);
-    if (ret != ESP_OK) return ret;
-
-    httpd_uri_t ota_storage_uri = {
-        .uri = "/api/ota/storage",
-        .method = HTTP_POST,
-        .handler = ota_storage_post_handler,
-        .user_ctx = ota,
-        .is_websocket = false,
-        .handle_ws_control_frames = false,
-        .supported_subprotocol = nullptr,
-    };
-    ret = reg_one(server, ota_storage_uri);
-    if (ret != ESP_OK) return ret;
-
-    httpd_uri_t ota_app_uri = {
-        .uri = "/api/ota/app",
-        .method = HTTP_POST,
-        .handler = ota_app_post_handler,
-        .user_ctx = ota,
-        .is_websocket = false,
-        .handle_ws_control_frames = false,
-        .supported_subprotocol = nullptr,
-    };
-    ret = reg_one(server, ota_app_uri);
-    if (ret != ESP_OK) return ret;
+    for (const UriDesc& d : kOtaUris) {
+        httpd_uri_t uri = {
+            .uri = d.uri,
+            .method = d.method,
+            .handler = d.handler,
+            .user_ctx = ota,
+            .is_websocket = false,
+            .handle_ws_control_frames = false,
+            .supported_subprotocol = nullptr,
+        };
+        esp_err_t ret = reg_one(server, uri);
+        if (ret != ESP_OK) return ret;
+    }
 
     ESP_LOGI(TAG, "OTA endpoints registered");
     return ESP_OK;

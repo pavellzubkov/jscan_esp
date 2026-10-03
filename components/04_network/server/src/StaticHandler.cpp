@@ -36,9 +36,22 @@ static esp_err_t is_uri_safe(httpd_req_t* req) {
 }
 
 // Content-Type по расширению файла (без учёта .gz).
-static void set_content_type_from_file(httpd_req_t* req, const char* filepath) {
-    const char* type = "text/plain";
+struct MimeEntry { const char* ext; const char* type; };
+static constexpr MimeEntry kMimeTypes[] = {
+    {".html",  "text/html"},
+    {".js",    "application/javascript"},
+    {".css",   "text/css"},
+    {".png",   "image/png"},
+    {".ico",   "image/x-icon"},
+    {".svg",   "image/svg+xml"},
+    {".json",  "application/json"},
+    {".jpg",   "image/jpeg"},
+    {".jpeg",  "image/jpeg"},
+    {".woff",  "font/woff"},
+    {".woff2", "font/woff2"},
+};
 
+static void set_content_type_from_file(httpd_req_t* req, const char* filepath) {
     char name[64];
     strlcpy(name, filepath, sizeof name);
     size_t len = strlen(name);
@@ -46,28 +59,14 @@ static void set_content_type_from_file(httpd_req_t* req, const char* filepath) {
         name[len - 3] = '\0';
     }
 
-    if (CHECK_FILE_EXTENSION(name, ".html"))
-        type = "text/html";
-    else if (CHECK_FILE_EXTENSION(name, ".js"))
-        type = "application/javascript";
-    else if (CHECK_FILE_EXTENSION(name, ".css"))
-        type = "text/css";
-    else if (CHECK_FILE_EXTENSION(name, ".png"))
-        type = "image/png";
-    else if (CHECK_FILE_EXTENSION(name, ".ico"))
-        type = "image/x-icon";
-    else if (CHECK_FILE_EXTENSION(name, ".svg"))
-        type = "image/svg+xml";
-    else if (CHECK_FILE_EXTENSION(name, ".json"))
-        type = "application/json";
-    else if (CHECK_FILE_EXTENSION(name, ".jpg") ||
-             CHECK_FILE_EXTENSION(name, ".jpeg"))
-        type = "image/jpeg";
-    else if (CHECK_FILE_EXTENSION(name, ".woff"))
-        type = "font/woff";
-    else if (CHECK_FILE_EXTENSION(name, ".woff2"))
-        type = "font/woff2";
-
+    // Линейный поиск (N=11): бинарный поиск не нужен, таблица константна.
+    const char* type = "text/plain";
+    for (const MimeEntry& e : kMimeTypes) {
+        if (CHECK_FILE_EXTENSION(name, e.ext)) {
+            type = e.type;
+            break;
+        }
+    }
     httpd_resp_set_type(req, type);
 }
 

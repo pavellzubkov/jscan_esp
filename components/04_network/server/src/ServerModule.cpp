@@ -32,7 +32,7 @@ esp_err_t ServerModule::begin() {
     // OTA-хендлеры выполняют длительные flash-операции (стирание/запись) прямо
     // в задаче httpd. Увеличенный стек страхует от переполнения в этих путях.
     config.stack_size = 16384;
-    config.max_uri_handlers = 32;
+    config.max_uri_handlers = http::kMaxUriHandlers;
     config.lru_purge_enable = true;
     // TCP keepalive: без него (дефолт false) мёртвый клиент держит сессию
     // httpd вечно. При kill/wifi-обрыве keepalive отвалит сокет за ~10+15 с,

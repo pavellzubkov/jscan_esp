@@ -4,6 +4,7 @@
 // J1939TransportProtocol (BAM/RTS/CTS/EOM), J1939Decoder.
 
 #include "AppData.h"
+#include "ByteOrder.h"
 #include "FieldRegistry.h"
 #include "J1939Decoder.h"
 #include "J1939Proto.h"
@@ -109,6 +110,44 @@ static void test_proto() {
     // wrapFrame не влезает.
     CHECK(J1939Proto::wrapFrame(J1939Proto::kMsgTypeSnapshot, 0, payload, 3,
                                 1, frame, 4) == 0);
+}
+
+// ============================================================
+// ByteOrder (общий readLE/writeU16LE — вместо дублей в реестре/конфиге)
+// ============================================================
+static void test_byte_order() {
+    // readUnsignedLE: числа разной ширины, LE.
+    const uint8_t le4[4] = {0x01, 0x02, 0x03, 0x04};
+    CHECK(readUnsignedLE(le4, 1) == 0x01);
+    CHECK(readUnsignedLE(le4, 2) == 0x0201);
+    CHECK(readUnsignedLE(le4, 4) == 0x04030201u);
+
+    // readSignedLE: двух's complement, знаковые 1/4 байта.
+    const uint8_t neg1[1] = {0xFF};
+    CHECK(readSignedLE(neg1, 1) == -1);
+    const uint8_t neg4[4] = {0x00, 0x00, 0x00, 0x80};
+    CHECK(readSignedLE(neg4, 4) == INT32_MIN);
+    const uint8_t pos4[4] = {0xFF, 0xFF, 0xFF, 0x7F};
+    CHECK(readSignedLE(pos4, 4) == INT32_MAX);
+
+    // uint16 LE roundtrip (uid в протоколе).
+    uint8_t b[2] = {0, 0};
+    writeU16LE(b, 0xABCD);
+    CHECK(b[0] == 0xCD && b[1] == 0xAB);
+    CHECK(readU16LE(b) == 0xABCD);
+    writeU16LE(b, 0xFFFF);
+    CHECK(readU16LE(b) == 0xFFFF);
+    const uint8_t raw[2] = {0x34, 0x12};
+    CHECK(readU16LE(raw) == 0x1234);
+
+    // Hw::isValidBitrate — единственный список допустимых битрейтов.
+    CHECK(Hw::isValidBitrate(125000));
+    CHECK(Hw::isValidBitrate(250000));
+    CHECK(Hw::isValidBitrate(500000));
+    CHECK(Hw::isValidBitrate(1000000));
+    CHECK(!Hw::isValidBitrate(125001));   // диапазон не пропускает «между»
+    CHECK(!Hw::isValidBitrate(0));
+    CHECK(!Hw::isValidBitrate(33333));
 }
 
 // ============================================================
@@ -259,6 +298,29 @@ static void test_field_registry() {
     // Значение после отказа не изменилось (последняя валидная запись).
     CHECK(reg.readField(apIp_UID, out, sizeof(out), &outLen));
     CHECK(outLen == 1 + 11 && std::memcmp(out + 1, "10.10.10.10", 11) == 0);
+
+    // writeFieldDetectChange: запись под одним локом + детекция изменения.
+    bool changed = false;
+    const uint32_t brA = 1000000;
+    CHECK(reg.writeFieldDetectChange(canBitrate_UID, &brA, sizeof(brA),
+                                     FieldDomain::PROTOCOL, &changed) ==
+          FieldWriteStatus::OK);
+    CHECK(changed);                              // 500000 -> 1000000
+    CHECK(reg.writeFieldDetectChange(canBitrate_UID, &brA, sizeof(brA),
+                                     FieldDomain::PROTOCOL, &changed) ==
+          FieldWriteStatus::OK);
+    CHECK(!changed);                             // та же запись — не изменилось
+    // Отказ записи (вне диапазона 125000..1000000) -> changed=false,
+    // статус пробрасывается.
+    const uint32_t brBad = 100;
+    CHECK(reg.writeFieldDetectChange(canBitrate_UID, &brBad, sizeof(brBad),
+                                     FieldDomain::PROTOCOL, &changed) ==
+          FieldWriteStatus::OUT_OF_RANGE);
+    CHECK(!changed);
+    // nullptr changed — детекция не выполняется, запись работает.
+    CHECK(reg.writeFieldDetectChange(canBitrate_UID, &brA, sizeof(brA),
+                                     FieldDomain::PROTOCOL, nullptr) ==
+          FieldWriteStatus::OK);
 }
 
 // ============================================================

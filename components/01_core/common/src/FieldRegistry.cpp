@@ -1,5 +1,6 @@
 #include "FieldRegistry.h"
 #include "AppTypes.h"
+#include "ByteOrder.h"   // readUnsignedLE/readSignedLE — общий с ConfigStore
 #include "esp_log.h"
 #include <cstring>
 #include <mutex>
@@ -37,21 +38,6 @@ static size_t serializeField(const FieldMeta* meta, const AppData* data, uint8_t
     }
     memcpy(out, src, meta->size);
     return meta->size;
-}
-
-static uint64_t readUnsignedLE(const uint8_t* p, size_t n) {
-    uint64_t v = 0;
-    for (size_t i = 0; i < n; ++i) v |= (uint64_t)p[i] << (8 * i);
-    return v;
-}
-
-static int64_t readSignedLE(const uint8_t* p, size_t n) {
-    uint64_t v = readUnsignedLE(p, n);
-    if (n < 8) {
-        bool neg = v & (uint64_t(1) << (8 * n - 1));
-        if (neg) v |= ~((uint64_t(1) << (8 * n)) - 1);
-    }
-    return static_cast<int64_t>(v);
 }
 
 // Строка — корректный IPv4 "a.b.c.d": ровно 4 октета, каждый 0..255,
@@ -224,6 +210,33 @@ FieldWriteStatus FieldRegistry::writeField(uint16_t uid, const void* value,
 
     if (!deserializeField(meta, &data_, static_cast<const uint8_t*>(value), len)) {
         return FieldWriteStatus::BAD_LENGTH;
+    }
+    return FieldWriteStatus::OK;
+}
+
+FieldWriteStatus FieldRegistry::writeFieldDetectChange(uint16_t uid, const void* value,
+                                                       size_t len, FieldDomain owner,
+                                                       bool* changed) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+
+    // Старое значение — до записи (нужно только для детекции).
+    uint8_t oldBuf[kAppMaxFieldSize + 8];
+    size_t oldLen = 0;
+    const bool hadOld = changed &&
+                        readField(uid, oldBuf, sizeof(oldBuf), &oldLen);
+
+    const FieldWriteStatus st = writeField(uid, value, len, owner);
+    if (st != FieldWriteStatus::OK) {
+        if (changed) *changed = false;
+        return st;
+    }
+
+    if (changed) {
+        uint8_t newBuf[kAppMaxFieldSize + 8];
+        size_t newLen = 0;
+        const bool hasNew = readField(uid, newBuf, sizeof(newBuf), &newLen);
+        *changed = !hadOld || !hasNew || oldLen != newLen ||
+                   memcmp(oldBuf, newBuf, oldLen) != 0;
     }
     return FieldWriteStatus::OK;
 }

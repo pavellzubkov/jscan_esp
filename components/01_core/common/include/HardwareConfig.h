@@ -11,6 +11,15 @@ constexpr gpio_num_t kCanRxGpio = GPIO_NUM_4;
 // Битрейт J1939 по умолчанию (CAN 2.0B, 250 kbps). Актуальное значение —
 // конфигурируемое поле canBitrate (AppData), применяется при перезагрузке.
 constexpr uint32_t kCanBitrate = 250000;
+// Набор допустимых битрейтов TWAI (поле canBitrate): единственный источник
+// списка — валидация конфига в J1939System, а не дубли в каждом call site.
+constexpr bool isValidBitrate(uint32_t br)
+{
+    constexpr uint32_t kAllowed[] = {125000, 250000, 500000, 1000000};
+    for (uint32_t b : kAllowed)
+        if (b == br) return true;
+    return false;
+}
 // Дефолты конфигурируемых TWAI-полей (TwaiFields.inc) и фолбэки чтения
 // из реестра (J1939System) — единый источник литералов 25 / 100.
 constexpr uint8_t  kDefaultNodeAddr    = 25;

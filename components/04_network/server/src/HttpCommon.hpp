@@ -10,6 +10,11 @@ namespace http {
 // static_ctx_t при регистрации wildcard-хендлера.
 inline constexpr const char *kStaticMountPath = "/littlefs";
 
+// Лимит URI-хендлеров httpd (httpd_config_t.max_uri_handlers): покрывает
+// OTA (3) + WS + статику + запас на будущие роуты; захардкожен не был —
+// теперь единая константа вместо литерала 32 в ServerModule::begin.
+inline constexpr int kMaxUriHandlers = 32;
+
 namespace status {
 inline constexpr const char *kOk                  = "200 OK";
 inline constexpr const char *kFound               = "302 Found";
