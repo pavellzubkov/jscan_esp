@@ -2,6 +2,7 @@
 #include "esp_err.h"
 #include <cstddef>
 #include <cstdint>
+#include <new>
 #include <utility>
 
 class AppContext;
@@ -10,7 +11,8 @@ class AppContext;
 // Объявлен здесь, чтобы main оставался декларативной таблицей модулей.
 template <typename Module, typename... Args>
 inline esp_err_t makeModule(AppContext* ctx, Args&&... args) {
-    Module* m = new Module(ctx, std::forward<Args>(args)...);
+    Module* m = new (std::nothrow) Module(ctx, std::forward<Args>(args)...);
+    if (!m) return ESP_ERR_NO_MEM;
     esp_err_t err = m->begin();
     if (err != ESP_OK) { delete m; }
     return err;
@@ -18,8 +20,11 @@ inline esp_err_t makeModule(AppContext* ctx, Args&&... args) {
 
 // Регистрация модуля в BootManager. Критичные модули при ошибке останавливают
 // загрузку; некритичные — логируют ошибку, но система продолжает старт.
+// Возврат add() намеренно игнорируется cast'ом: ошибка (лимит kMaxModules)
+// уже залогирована внутри BootManager::add, а REGISTER_MODULE — declaration-
+// style макрос в main.
 #define REGISTER_MODULE(boot, name, Type, priority, critical, ...) \
-    (boot).add({name, [](AppContext* c) { return makeModule<Type>(c, ##__VA_ARGS__); }, priority, critical})
+    ((void)(boot).add({name, [](AppContext* c) { return makeModule<Type>(c, ##__VA_ARGS__); }, priority, critical}))
 
 /**
  * @brief BootManager — табличный загрузчик модулей.

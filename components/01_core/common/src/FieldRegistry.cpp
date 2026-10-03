@@ -97,14 +97,16 @@ static bool valueInRange(const FieldMeta* meta, const uint8_t* payload, size_t p
         return true;
     }
     if (meta->validator == CFG_FLOAT) {
-        if (payloadLen < sizeof(float)) return false;
+        if (payloadLen != sizeof(float)) return false;
         float f; memcpy(&f, payload, sizeof(float));
         double v = f;
         return (v >= minVal) && (v <= maxVal);
     }
     // Целые читаем как знаковые (допускают отрицательные значения);
-    // enum / bool — как беззнаковые (0..N).
-    if (payloadLen < meta->size) return false;
+    // enum / bool — как беззнаковые (0..N). Длина wire — строго meta->size:
+    // более длинный payload молча усекался бы в deserializeField (хвост
+    // терялся без ошибки), короткий и раньше отклонялся.
+    if (payloadLen != meta->size) return false;
     double v = (meta->validator == CFG_INT)
                    ? static_cast<double>(readSignedLE(payload, meta->size))
                    : static_cast<double>(readUnsignedLE(payload, meta->size));
@@ -126,7 +128,7 @@ static bool deserializeField(const FieldMeta* meta, AppData* data,
         fs->data[n] = '\0';
         return true;
     }
-    if (payloadLen < meta->size) return false;
+    if (payloadLen != meta->size) return false;
     memcpy(dst, payload, meta->size);
     return true;
 }
@@ -158,8 +160,9 @@ size_t FieldRegistry::fieldCount() const {
     return kAppFieldCount;
 }
 
-const FieldMeta& FieldRegistry::fieldAt(size_t index) const {
-    return g_fieldMeta[index];
+const FieldMeta* FieldRegistry::fieldAt(size_t index) const {
+    if (index >= kAppFieldCount) return nullptr;
+    return &g_fieldMeta[index];
 }
 
 void FieldRegistry::setDynamicReader(FieldDynamicReader reader) {

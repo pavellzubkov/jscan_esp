@@ -3,7 +3,9 @@
 #include "AppEvents.h"
 #include <cstring>
 
-// Отправка одного поля по коммуникационному модулю (broadcast)
+// Отправка одного поля по коммуникационному модулю (broadcast).
+// Возврат post намеренно не проверяется: дроп события (очередь event-loop
+// полна) уже логируется внутри EventManager со счётчиком droppedEvents().
 inline void sendField(AppContext* ctx, uint16_t uid)
 {
     communication_send_event_t evt = { uid, -1 };
@@ -49,6 +51,7 @@ bool updateField(AppContext* ctx, uint16_t uid, const T& value)
 // Опубликовать изменение поля в общей шине приложения.
 // Позволяет доменным функциям общаться друг с другом через тот же
 // механизм, что и запись по протоколу (app_event_id_t::CONFIG_CHANGED).
+// Возврат post не проверяется — дроп логируется в EventManager.
 inline void postFieldChanged(AppContext* ctx, uint16_t uid)
 {
     field_change_event_t evt = { uid };

@@ -86,7 +86,7 @@ esp_err_t J1939System::begin()
     TwaiDriver::Config cfg;
     cfg.tx = Hw::kCanTxGpio;
     cfg.rx = Hw::kCanRxGpio;
-    if (!ctx_->fields.getByName("canBitrate", cfg.bitrate))
+    if (!ctx_->fields.getByUid(canBitrate_UID, cfg.bitrate))
         cfg.bitrate = Hw::kCanBitrate;
     if (!isValidBitrate(cfg.bitrate))
     {
@@ -102,7 +102,7 @@ esp_err_t J1939System::begin()
 
     // Наш адрес — распознавание RTS «на нас» (TP.CM) в задаче приёма.
     uint8_t nodeAddr = Hw::kDefaultNodeAddr;
-    ctx_->fields.getByName("canNodeAddr", nodeAddr);
+    ctx_->fields.getByUid(canNodeAddr_UID, nodeAddr);
     tp_.setLocalAddr(nodeAddr);
 
     esp_err_t err = twai_.begin(cfg);
@@ -175,13 +175,13 @@ void J1939System::sendRequest(const j1939_request_t& req)
     buf[2] = static_cast<uint8_t>((req.pgn >> 16) & 0xFF);
 
     uint8_t nodeAddr = Hw::kDefaultNodeAddr;   // дефолт canNodeAddr (TwaiFields.inc)
-    ctx_->fields.getByName("canNodeAddr", nodeAddr);
+    ctx_->fields.getByUid(canNodeAddr_UID, nodeAddr);
 
     uint32_t id = (6u << 26) | (Hw::kPgnRequest << 8) | nodeAddr;
     id = (id & 0xFFFF00FFu) | (static_cast<uint32_t>(req.dstAddr) << 8);
 
     uint16_t txTimeoutMs = Hw::kDefaultTxTimeoutMs;
-    ctx_->fields.getByName("canTxTimeoutMs", txTimeoutMs);
+    ctx_->fields.getByUid(canTxTimeoutMs_UID, txTimeoutMs);
 
     // canTxTimeoutMs — ограничение драйвера (поле в конфиге/протоколе),
     // но TX RQST больше НЕ ждёт окончания передачи: timeout=0 = «кадр
@@ -207,7 +207,8 @@ void J1939System::onConfigChanged(const field_change_event_t* evt)
     case canNodeAddr_UID:
     {
         uint8_t v = Hw::kDefaultNodeAddr;
-        ctx_->fields.getByName("canNodeAddr", v);
+        if (!ctx_->fields.getByUid(canNodeAddr_UID, v))
+            ESP_LOGW(TAG, "read canNodeAddr failed, applying default");
         ESP_LOGI(TAG, "canNodeAddr=%u applied immediately", v);
         tp_.setLocalAddr(v);   // TP: RTS «на нас» — по новому адресу
         break;
@@ -215,15 +216,19 @@ void J1939System::onConfigChanged(const field_change_event_t* evt)
     case canTxTimeoutMs_UID:
     {
         uint16_t v = Hw::kDefaultTxTimeoutMs;
-        ctx_->fields.getByName("canTxTimeoutMs", v);
+        if (!ctx_->fields.getByUid(canTxTimeoutMs_UID, v))
+            ESP_LOGW(TAG, "read canTxTimeoutMs failed, keeping default");
         ESP_LOGI(TAG, "canTxTimeoutMs=%u applied immediately", v);
         break;
     }
     case canBitrate_UID:
     {
         uint32_t br = 0;
-        if (!ctx_->fields.getByName("canBitrate", br))
+        if (!ctx_->fields.getByUid(canBitrate_UID, br))
+        {
+            ESP_LOGW(TAG, "read canBitrate failed, skipping apply");
             break;
+        }
         if (!isValidBitrate(br))
         {
             ESP_LOGW(TAG, "canBitrate=%lu invalid (need 125000/250000/500000/1000000), reverting to 250000",
@@ -253,7 +258,7 @@ void J1939System::taskLoop()
     // чтобы не зависеть от CONFIG_FREERTOS_HZ. Сравнения идут по (int32_t)
     // поверх uint32_t-счётчика мс — переполнение каждые ~49 суток безопасно.
     uint32_t snapshotIntervalMs = Timing::kSnapshotIntervalMs;
-    ctx_->fields.getByName("snapshotIntervalMs", snapshotIntervalMs);
+    ctx_->fields.getByUid(snapshotIntervalMs_UID, snapshotIntervalMs);
 
     const uint32_t t0 = Timing::nowMs();
     uint32_t nextSnapshot  = t0 + snapshotIntervalMs;
@@ -293,7 +298,7 @@ void J1939System::taskLoop()
         if ((int32_t)(now - nextSnapshot) >= 0)   // тик-безопасное сравнение
         {
             sendSnapshot(now);
-            ctx_->fields.getByName("snapshotIntervalMs", snapshotIntervalMs);
+            ctx_->fields.getByUid(snapshotIntervalMs_UID, snapshotIntervalMs);
             nextSnapshot = now + snapshotIntervalMs;
         }
         if ((int32_t)(now - nextTelemetry) >= 0)
@@ -342,7 +347,7 @@ void J1939System::updateTwaiStatus()
         bool canAutoRecover = false;
         {
             AppDataLock lock(ctx_);   // чтение config-поля — под локом adata
-            ctx_->fields.getByName("canAutoRecover", canAutoRecover);
+            ctx_->fields.getByUid(canAutoRecover_UID, canAutoRecover);
         }
         if (canAutoRecover)
         {
@@ -426,7 +431,7 @@ void J1939System::sendTpAction(const TpAction& act)
     buf[7] = static_cast<uint8_t>((act.pgn >> 16) & 0xFF);
 
     uint8_t nodeAddr = Hw::kDefaultNodeAddr;
-    ctx_->fields.getByName("canNodeAddr", nodeAddr);
+    ctx_->fields.getByUid(canNodeAddr_UID, nodeAddr);
     uint32_t id = (7u << 26) | (Hw::kPgnTpCm << 8) | nodeAddr;
     id = (id & 0xFFFF00FFu) | (static_cast<uint32_t>(act.dst) << 8);
 
@@ -453,7 +458,7 @@ void J1939System::sendSnapshot(uint32_t nowMs)
     // (Comm) — здесь только домен: сбор активных записей и батч.
     const SnapshotAccumulator::Record* recs = nullptr;
     uint32_t ttlMs = Timing::kSnapshotTtlMs;
-    ctx_->fields.getByName("snapshotTtlMs", ttlMs);
+    ctx_->fields.getByUid(snapshotTtlMs_UID, ttlMs);
     const size_t n = acc_.collect(recs, nowMs, ttlMs);
     if (n == 0)
         return;   // нет активных записей — пустой батч не шлём
@@ -461,7 +466,7 @@ void J1939System::sendSnapshot(uint32_t nowMs)
     // Потолок карты аккумулятора (поле maxTrackedPgns, 16..128): применяется
     // к уже отсортированному порядку, т.е. «свежие первыми» (PROTOCOL §7).
     uint16_t maxTracked = SnapshotAccumulator::kMaxRecords;
-    ctx_->fields.getByName("maxTrackedPgns", maxTracked);
+    ctx_->fields.getByUid(maxTrackedPgns_UID, maxTracked);
     const size_t emitLimit =
         (n < static_cast<size_t>(maxTracked)) ? n : static_cast<size_t>(maxTracked);
 

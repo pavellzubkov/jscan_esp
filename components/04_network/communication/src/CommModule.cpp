@@ -217,8 +217,9 @@ void CommunicationModule::onWsClientConnected(const ws_message_t* msg)
     // Push-on-connect: адресно отправить текущее значение каждого поля.
     for (size_t i = 0; i < ctx_->fields.fieldCount(); ++i)
     {
-        const FieldMeta& m = ctx_->fields.fieldAt(i);
-        sendValueFrame(J1939Proto::kMsgTypeParamPush, m.uid, msg->sockfd);
+        const FieldMeta* m = ctx_->fields.fieldAt(i);
+        if (!m) continue;
+        sendValueFrame(J1939Proto::kMsgTypeParamPush, m->uid, msg->sockfd);
     }
 }
 

@@ -111,7 +111,7 @@ static esp_err_t is_captive(httpd_req_t* req) {
     AppContext* app =
         static_cast<AppContext*>(httpd_get_global_user_ctx(req->handle));
     FixedString apIpStr;
-    if (!app || !app->fields.getByName("apIp", apIpStr)) {
+    if (!app || !app->fields.getByUid(apIp_UID, apIpStr)) {
         ESP_LOGW(TAG, "apIp unavailable, captive disabled");
         return ESP_FAIL;
     }

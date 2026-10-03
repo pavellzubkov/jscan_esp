@@ -4,6 +4,7 @@
 #include "EventManager.h"
 #include "FieldRegistry.h"
 #include "esp_event.h"
+#include "esp_log.h"
 #include <mutex>
 
 // Контекст приложения: контейнер общего состояния и сервисов.
@@ -16,10 +17,21 @@ struct AppContext {
     // Реестр полей с контролем владения (обёртка над adata).
     FieldRegistry fields;
 
-    AppContext() : fields(adata, adataMutex) {}
+    AppContext() : fields(adata, adataMutex) {
+        // Дефолты с самого начала жизни контекста: в degraded mode ConfigStore
+        // может упасть до своего initAppDataDefault — поля не должны остаться
+        // нулями (zero-init в AppData страхует от мусора, это — реальные
+        // дефолты). Повторный вызов в ConfigStore::begin идемпотентен.
+        initAppDataDefault(adata);
+    }
     ~AppContext() {
         events.shutdown();            // снять подписки ДО удаления loop
-        if (event_loop) esp_event_loop_delete(event_loop);
+        if (event_loop) {
+            const esp_err_t err = esp_event_loop_delete(event_loop);
+            if (err != ESP_OK)
+                ESP_LOGW("AppContext", "esp_event_loop_delete failed: %s",
+                         esp_err_to_name(err));
+        }
     }
     AppContext(const AppContext&) = delete;
     AppContext& operator=(const AppContext&) = delete;

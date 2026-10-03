@@ -181,9 +181,9 @@ esp_err_t WifiApModule::begin() {
 
     FixedString apSsid;
     uint8_t apChannel = 6, maxStaConn = 2;
-    ctx_->fields.getByName("apSsid", apSsid);
-    ctx_->fields.getByName("apChannel", apChannel);
-    ctx_->fields.getByName("maxStaConn", maxStaConn);
+    ctx_->fields.getByUid(apSsid_UID, apSsid);
+    ctx_->fields.getByUid(apChannel_UID, apChannel);
+    ctx_->fields.getByUid(maxStaConn_UID, maxStaConn);
     ESP_LOGI(TAG, "softAP started: ssid=%s channel=%u maxSta=%u",
              apSsid.data, apChannel, maxStaConn);
     return ESP_OK;
@@ -191,13 +191,20 @@ esp_err_t WifiApModule::begin() {
 
 esp_err_t WifiApModule::applyConfig() {
     // Конфиг AP читаем через реестр полей (под локом) — единая точка доступа.
+    // Любой false (UID нет в схеме / несовпадение sizeof) — рассинхрон кода
+    // и схемы: логируем и отказываем (begin/onWifiReapply проверяют return).
     FixedString apIp, apSsid, apPassword;
     uint8_t apChannel = 6, maxStaConn = 2;
-    ctx_->fields.getByName("apIp", apIp);
-    ctx_->fields.getByName("apSsid", apSsid);
-    ctx_->fields.getByName("apPassword", apPassword);
-    ctx_->fields.getByName("apChannel", apChannel);
-    ctx_->fields.getByName("maxStaConn", maxStaConn);
+    bool fieldsOk = true;
+    fieldsOk &= ctx_->fields.getByUid(apIp_UID, apIp);
+    fieldsOk &= ctx_->fields.getByUid(apSsid_UID, apSsid);
+    fieldsOk &= ctx_->fields.getByUid(apPassword_UID, apPassword);
+    fieldsOk &= ctx_->fields.getByUid(apChannel_UID, apChannel);
+    fieldsOk &= ctx_->fields.getByUid(maxStaConn_UID, maxStaConn);
+    if (!fieldsOk) {
+        ESP_LOGE(TAG, "failed to read AP config fields from registry");
+        return ESP_FAIL;
+    }
 
     // Статический IP точки доступа из конфигурации (apIp).
     const uint32_t ip = parseIp(apIp.data);

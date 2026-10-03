@@ -52,7 +52,7 @@ wsl -d Ubuntu-22.04 -- bash -lc "cd /mnt/e/Projects/Embedded/ESP32/J1939_scaner/
 | 8 | WS: отправка из event-loop -> sender-задача | ☑ |
 | 9 | Сеть: DNS/captive/netif крайние случаи | ☑ |
 | 10 | TP до полноценного (RTS/CTS/EOM) + host-тесты | ☑ |
-| 11 | Ресурсы и крайние случаи (AppData/длины/UID) | ☐ |
+| 11 | Ресурсы и крайние случаи (AppData/длины/UID) | ☑ |
 | 12 | Graceful shutdown задач (J1939/ConfigStore) | ☐ |
 | 13 | Гигиена: event base, мёртвый код, sdkconfig, тесты | ☐ |
 | 14 | Расширяемость: таблицы, CFG_ENUM, домены, readLE | ☐ |
@@ -874,7 +874,7 @@ header + payload). За это время очередь событий (256) к
 
 ---
 
-## Шаг 11. Ресурсы и крайние случаи: AppData, длины, UID-доступ
+## Шаг 11. Ресурсы и крайние случаи: AppData, длины, UID-доступ ✔
 
 **Цель.** Закрыть ревью 2.7 (AppData без member-инициализаторов, молчаливое
 применение конфига по строке, принимаемый payload длиннее `meta->size`,

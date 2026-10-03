@@ -23,7 +23,9 @@
 // Структура AppData (плоская сериализуемая схема)
 // ---------------------------------------------------------------
 #undef DATA_FIELD
-#define DATA_FIELD(type, name, def, min, max, validator, isConfig, readonly) type name;
+// {} — value-init: до вызова initAppDataDefault (в конструкторе AppContext)
+// поля гарантированно нулевые, а не мусор со стека/кучи.
+#define DATA_FIELD(type, name, def, min, max, validator, isConfig, readonly) type name{};
 
 struct AppData {
 #include "WifiFields.inc"

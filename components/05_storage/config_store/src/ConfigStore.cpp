@@ -382,12 +382,14 @@ void ConfigStore::saveToFs() {
     cJSON* root = buildFieldsJson();
     if (!root) {
         ESP_LOGE(TAG, "OOM creating config JSON");
+        dirty_.store(true);   // dirty_ уже сброшен — вернуть, чтобы повторить
         return;
     }
     char* textRaw = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
     if (!textRaw) {
         ESP_LOGE(TAG, "OOM printing config JSON");
+        dirty_.store(true);
         return;
     }
     // unique_ptr с deleter cJSON_free: освобождение на всех путях выхода
@@ -403,6 +405,7 @@ void ConfigStore::saveToFs() {
     if (fd < 0) {
         ESP_LOGE(TAG, "Failed to open '%s' for write (errno=%d)",
                  tmp.c_str(), errno);
+        dirty_.store(true);   // без этого изменение терялось бы навсегда
         return;
     }
 
@@ -415,6 +418,7 @@ void ConfigStore::saveToFs() {
             ESP_LOGE(TAG, "Failed to write config '%s' (errno=%d)",
                      tmp.c_str(), errno);
             close(fd);
+            dirty_.store(true);
             return;
         }
         p += w;
@@ -426,6 +430,7 @@ void ConfigStore::saveToFs() {
     if (rename(tmp.c_str(), full.c_str()) != 0) {
         ESP_LOGE(TAG, "Failed to rename '%s' -> '%s' (errno=%d)",
                  tmp.c_str(), full.c_str(), errno);
+        dirty_.store(true);
         return;
     }
 

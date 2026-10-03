@@ -134,6 +134,13 @@ static void test_field_registry() {
     uint16_t timeout = 0;
     CHECK(reg.getByName("canTxTimeoutMs", timeout) && timeout == 100);
 
+    // Дефолты через getByUid (UID-константы): тот же raw-доступ, но опечатка
+    // в имени не скомпилируется. FULL_ID (0xFFFF) — невалидный UID -> false.
+    uint8_t chByUid = 0;
+    CHECK(reg.getByUid(apChannel_UID, chByUid) && chByUid == 6);
+    uint8_t chBadUid = 0;
+    CHECK(!reg.getByUid(FULL_ID, chBadUid));
+
     // Дефолты полей обязаны совпадать с константами Hw/Timing (единый
     // источник литералов в HardwareConfig.h/SystemTiming.h).
     uint8_t nodeAddr = 0;
@@ -157,6 +164,17 @@ static void test_field_registry() {
     size_t len = 0;
     CHECK(reg.readField(canBitrate_UID, &br2, sizeof(br2), &len));
     CHECK(len == sizeof(uint32_t) && br2 == 500000);
+
+    // Строгие длины: wire-формат числа = ровно meta->size байт.
+    // Payload длиннее size раньше принимался (хвост молча отрезался).
+    uint8_t tooLong[sizeof(uint32_t) + 1] = {};
+    CHECK(reg.writeField(canBitrate_UID, tooLong, sizeof(tooLong),
+                         FieldDomain::PROTOCOL) ==
+          FieldWriteStatus::OUT_OF_RANGE);
+    uint8_t tooShort[sizeof(uint32_t) - 1] = {};
+    CHECK(reg.writeField(canBitrate_UID, tooShort, sizeof(tooShort),
+                         FieldDomain::PROTOCOL) ==
+          FieldWriteStatus::OUT_OF_RANGE);
 
     // Диапазоны: apChannel вне [1,11].
     const uint8_t chBad = 20;

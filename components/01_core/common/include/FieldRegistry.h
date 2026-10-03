@@ -41,7 +41,9 @@ class FieldRegistry {
     const FieldMeta* getMetaByUid(uint16_t uid) const;
     const FieldMeta* getMetaByName(const char* name) const;
     size_t fieldCount() const;
-    const FieldMeta& fieldAt(size_t index) const;
+    // Метаданные по индексу; nullptr при выходе за границы (вызывающий
+    // обязан проверять указатель — раньше ссылка уходила за массив).
+    const FieldMeta* fieldAt(size_t index) const;
 
     // Регистрация провайдера динамических полей (один на систему).
     // Вызывается один раз при старте, до запуска задач.
@@ -73,10 +75,21 @@ class FieldRegistry {
     // 64 байта, а валидатор ждёт префикс длины.
     FieldWriteStatus writeFieldString(uint16_t uid, const char* value);
 
-    // Type-safe чтение «сырого» значения по имени (удобство).
+    // Type-safe чтение «сырого» значения по имени (удобство; в рантайме
+    // предпочтительнее getByUid — опечатка в имени тихо вернёт false).
     template <typename T>
     bool getByName(const char* name, T& out) const {
         const FieldMeta* m = getMetaByName(name);
+        if (!m || m->size != sizeof(T)) return false;
+        return readFieldRaw(m->uid, &out, sizeof(T));
+    }
+
+    // Type-safe чтение «сырого» значения по UID-константе (*_UID из AppData.h):
+    // опечатка в имени UID — ошибка компиляции, а не тихий возврат false.
+    // Для FixedString сверяется m->size == sizeof(T) — как в getByName.
+    template <typename T>
+    bool getByUid(uint16_t uid, T& out) const {
+        const FieldMeta* m = getMetaByUid(uid);
         if (!m || m->size != sizeof(T)) return false;
         return readFieldRaw(m->uid, &out, sizeof(T));
     }
