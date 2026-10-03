@@ -30,11 +30,18 @@ bool TwaiDriver::rxDoneCb(twai_node_handle_t node,
         slot->frame.buffer_len = sizeof(slot->data);
         if (twai_node_receive_from_isr(node, &slot->frame) == ESP_OK)
         {
+            // Проект — строго 29-bit data-кадры: std (ide==0) и RTR отбраковываются
+            // уже в ISR, чтобы RxFrame был доверенным входом для J1939Decoder.
+            if (slot->frame.header.ide == 0 || slot->frame.header.rtr != 0)
+            {
+                xQueueSendFromISR(self->rxFreeQueue_, &slot, &hpw);
+                self->rxDrops_.fetch_add(1, std::memory_order_relaxed);
+            }
             // Консервация: free+ready+потребитель = rxSlots = глубина ready,
             // поэтому переполнение ready практически невозможно — но проверка
             // дёшева и спасает слот от «зависания» между очередями при будущих
             // правках. При отказе слот возвращается в free, кадр считается дропом.
-            if (xQueueSendFromISR(self->rxReadyQueue_, &slot, &hpw) != pdTRUE)
+            else if (xQueueSendFromISR(self->rxReadyQueue_, &slot, &hpw) != pdTRUE)
             {
                 xQueueSendFromISR(self->rxFreeQueue_, &slot, &hpw);
                 self->rxDrops_.fetch_add(1, std::memory_order_relaxed);

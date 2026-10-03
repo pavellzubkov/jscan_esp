@@ -2,12 +2,9 @@
 
 bool J1939Decoder::peerToPeer(uint32_t pgn)
 {
-    // Проверка PGN на принадлежность PDU1 (peer-to-peer)
-    if (pgn > 0 && pgn <= 0xEFFF)
-        return true;
-    if (pgn > 0x10000 && pgn <= 0x1EFFF)
-        return true;
-    return false;
+    // PDU1 (peer-to-peer): PF < 240 — критерий покрывает все страницы DP/R,
+    // включая pgn==0 (PF=0, dst=0) и DP=1 (0x10000+).
+    return ((pgn >> 8) & 0xFF) < 0xF0;
 }
 
 J1939PgnMsg J1939Decoder::decode(const TwaiDriver::RxFrame& frame)
@@ -25,11 +22,12 @@ J1939PgnMsg J1939Decoder::decode(const TwaiDriver::RxFrame& frame)
     if (m.isP2P)
     {
         m.dst = static_cast<uint8_t>(pgnRaw & 0xFF);
-        pgnRaw &= 0x1FF00;   // убрать PS, оставить PF/DP/EDP
+        pgnRaw &= 0x3FFF00;   // убрать PS, оставить PF/DP/R (R — бит 17)
     }
     else
     {
         m.dst = 0xFF;   // broadcast/не применимо
+        // PDU2: PS — часть PGN, pgnRaw не трогаем
     }
     m.pgn = pgnRaw;
 

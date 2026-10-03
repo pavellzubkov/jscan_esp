@@ -509,11 +509,30 @@ static void test_decoder() {
     m = J1939Decoder::decode(f);
     CHECK(m.dlc == 8);
 
-    // peerToPeer: границы PDU1-диапазонов.
-    CHECK(!J1939Decoder::peerToPeer(0));
+    // PF=0, PS=0 (dst=0): дегенеративный PDU1 — раньше классифицировался
+    // как broadcast (баг), теперь isP2P && dst==0 && pgn==0.
+    f = {};
+    f.id = (6u << 26);   // приоритет 6, PF=0, PS=0, SA=0
+    f.dlc = 8;
+    m = J1939Decoder::decode(f);
+    CHECK(m.isP2P);
+    CHECK(m.dst == 0);
+    CHECK(m.pgn == 0);
+
+    // DP=1, PF=0 (страница 1): PDU1, R/DP сохраняются в PGN (маска 0x3FFF00).
+    f = {};
+    f.id = (6u << 26) | (0x10005u << 8) | 0x19u;   // dst=5, DP=1, PF=0, sa=0x19
+    f.dlc = 8;
+    m = J1939Decoder::decode(f);
+    CHECK(m.isP2P);
+    CHECK(m.dst == 5);
+    CHECK(m.pgn == 0x10000);
+
+    // peerToPeer: критерий PF < 240 (границы PDU1/PDU2).
+    CHECK(J1939Decoder::peerToPeer(0));
     CHECK(J1939Decoder::peerToPeer(0xEFFF));
     CHECK(!J1939Decoder::peerToPeer(0xF000));
-    CHECK(!J1939Decoder::peerToPeer(0x10000));
+    CHECK(J1939Decoder::peerToPeer(0x10000));
     CHECK(J1939Decoder::peerToPeer(0x10001));
     CHECK(J1939Decoder::peerToPeer(0x1EFFF));
     CHECK(!J1939Decoder::peerToPeer(0x1F000));

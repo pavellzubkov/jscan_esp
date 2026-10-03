@@ -19,6 +19,6 @@ public:
     // 29-бит CAN ID → J1939-поля. Данные копируются по dlc.
     static J1939PgnMsg decode(const TwaiDriver::RxFrame& frame);
 
-    // Диапазоны peer-to-peer (PDU1): 0 < PGN <= 0xEFFF или 0x10000 < PGN <= 0x1EFFF.
+    // PDU1 (peer-to-peer): PF < 240 — покрывает все страницы DP/R.
     static bool peerToPeer(uint32_t pgn);
 };
