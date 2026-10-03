@@ -863,9 +863,78 @@ static void test_j1939_msg_channel() {
     }
 }
 
+// ============================================================
+// Golden-тест стабильности UID (ARCH_FIX4, шаг 8)
+// ============================================================
+// Захардкоженная таблица {имя, uid} ВСЕХ полей схемы. Любое
+// переименование/удаление/добавление поля в Domains.inc без обновления
+// таблицы делает тест красным (двусторонняя сверка с g_fieldMeta).
+// UID зафиксирован литералами (не fieldUid(...)) — изменение алгоритма
+// хэша тоже ловится. Генерация таблицы: временный вывод g_fieldMeta.
+static void test_field_uid_stability() {
+    struct Golden { const char* name; uint16_t uid; };
+    static const Golden kGolden[] = {
+        {"apSsid", 0x6A4F},
+        {"apPassword", 0xAC15},
+        {"apChannel", 0x1327},
+        {"maxStaConn", 0xB097},
+        {"apIp", 0x70F5},
+        {"wifiClients", 0x2C9C},
+        {"wifiApMode", 0x0A3E},
+        {"canNodeAddr", 0xF9FA},
+        {"canBitrate", 0x43F2},
+        {"canTxTimeoutMs", 0xB170},
+        {"canAutoRecover", 0x9712},
+        {"twaiState", 0x8B5F},
+        {"twaiTxErr", 0x3D79},
+        {"twaiRxErr", 0x11EF},
+        {"twaiRecoverCount", 0x4A5D},
+        {"twaiRxDrops", 0x0F2A},
+        {"twaiTxDrops", 0x9A58},
+        {"twaiStarted", 0x7CE3},
+        {"snapshotIntervalMs", 0xF03C},
+        {"snapshotTtlMs", 0x2ABB},
+        {"maxTrackedPgns", 0x1E3F},
+        {"activePgns", 0x0C39},
+        {"fwVersion", 0x8776},
+        {"uptimeMs", 0x751D},
+        {"heapFree", 0xF55D},
+    };
+    constexpr size_t kGoldenCount = sizeof(kGolden) / sizeof(kGolden[0]);
+
+    // Размер схемы совпадает: поле добавили/удалили — обнови таблицу.
+    CHECK(kGoldenCount == kAppFieldCount);
+
+    // Прямая сверка: каждое поле схемы присутствует в таблице с тем же UID.
+    for (size_t i = 0; i < kAppFieldCount; ++i) {
+        bool found = false;
+        for (size_t j = 0; j < kGoldenCount; ++j) {
+            if (std::strcmp(g_fieldMeta[i].name, kGolden[j].name) == 0) {
+                found = true;
+                CHECK(g_fieldMeta[i].uid == kGolden[j].uid);
+                break;
+            }
+        }
+        CHECK(found); // поле в схеме нет в golden-таблице
+    }
+
+    // Обратная сверка: каждое имя таблицы существует в схеме.
+    for (size_t j = 0; j < kGoldenCount; ++j) {
+        bool found = false;
+        for (size_t i = 0; i < kAppFieldCount; ++i) {
+            if (std::strcmp(g_fieldMeta[i].name, kGolden[j].name) == 0) {
+                found = true;
+                break;
+            }
+        }
+        CHECK(found); // поле в таблице удалено из схемы
+    }
+}
+
 int main() {
     test_proto();
     test_field_registry();
+    test_field_uid_stability();
     test_snapshot_accumulator();
     test_timing();
     test_decoder();
