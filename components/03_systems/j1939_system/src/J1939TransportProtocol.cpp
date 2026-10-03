@@ -11,22 +11,20 @@ void J1939TransportProtocol::reset()
         s.active = false;
 }
 
-void J1939TransportProtocol::onTpCm(const J1939PgnMsg& msg)
+bool J1939TransportProtocol::parseAnnounce(const J1939PgnMsg& msg,
+                                           uint16_t& totalLen, uint8_t& packets,
+                                           uint32_t& pgn)
 {
-    // Только BAM: control byte 32 и широковещательная рассылка (dst = 0xFF)
-    if (msg.data[0] != 32 || msg.dst != 0xFF)
-        return;
-
-    // Формат TP.CM (BAM): data[1..2] — длина, data[3] — число пакетов,
-    // data[5..7] — PGN (little-endian).
-    uint16_t totalLen = static_cast<uint16_t>(msg.data[1] | (msg.data[2] << 8));
-    uint8_t  packets  = msg.data[3];
-    uint32_t pgn      = static_cast<uint32_t>(msg.data[5]) |
-                        (static_cast<uint32_t>(msg.data[6]) << 8) |
-                        (static_cast<uint32_t>(msg.data[7]) << 16);
+    // Формат TP.CM (BAM/RTS): data[1..2] — длина LE, data[3] — число пакетов,
+    // data[5..7] — PGN LE. dlc >= 8 уже проверен вызывающим.
+    totalLen = static_cast<uint16_t>(msg.data[1] | (msg.data[2] << 8));
+    packets  = msg.data[3];
+    pgn      = static_cast<uint32_t>(msg.data[5]) |
+               (static_cast<uint32_t>(msg.data[6]) << 8) |
+               (static_cast<uint32_t>(msg.data[7]) << 16);
 
     if (totalLen == 0 || totalLen > J1939Proto::kJ1939MaxDataLen)
-        return;
+        return false;
 
     // Валидация числа пакетов: по спецификации packets == ceil(totalLen/7).
     // packets == 0 далее превратил бы packetsRemaining-- в 255 (uint8_t) —
@@ -37,13 +35,19 @@ void J1939TransportProtocol::onTpCm(const J1939PgnMsg& msg)
     {
         ESP_LOGD(TAG_TP, "TP.CM rejected: packets=%u expected=%u len=%u",
                  unsigned(packets), unsigned(expectedPackets), unsigned(totalLen));
-        return;   // некорректный BAM — сессия не создаётся
+        return false;   // некорректное объявление — сессия не создаётся
     }
+    return true;
+}
 
-    // Старая незавершённая сессия того же узла — перезапустить
+J1939TransportProtocol::Session* J1939TransportProtocol::startSession(
+    uint8_t sa, uint8_t dst, uint16_t totalLen, uint8_t packets,
+    uint32_t pgn, uint32_t nowMs)
+{
+    // Старая незавершённая сессия того же отправителя — перезапустить
     for (auto& s : sessions_)
     {
-        if (s.active && s.sa == msg.sa)
+        if (s.active && s.sa == sa)
             s.active = false;
     }
 
@@ -53,26 +57,121 @@ void J1939TransportProtocol::onTpCm(const J1939PgnMsg& msg)
             continue;
         s.active = true;
         s.pgn = pgn;
-        s.sa = msg.sa;
+        s.sa = sa;
+        s.dst = dst;
         s.totalLen = totalLen;
+        s.totalPackets = packets;
         s.packetsRemaining = packets;
         s.expectedPacket = 1;
-        s.lastTs = xTaskGetTickCount();
-        return;
+        s.lastMs = nowMs;
+        return &s;
+    }
+    ESP_LOGD(TAG_TP, "session pool exhausted (%u)", unsigned(kMaxSessions));
+    return nullptr;
+}
+
+TpAction J1939TransportProtocol::onTpCm(const J1939PgnMsg& msg, uint32_t nowMs)
+{
+    TpAction act;   // Kind::None по умолчанию
+
+    // Короткий/битый CM: data[1..7] при dlc<8 — мусор. Не трогаем сессии.
+    if (msg.dlc < 8)
+        return act;
+
+    const uint8_t control = msg.data[0];
+    switch (control)
+    {
+    case kCmBam:
+    {
+        // BAM — только широковещательная рассылка (dst = 0xFF).
+        if (msg.dst != 0xFF)
+            return act;
+
+        uint16_t totalLen = 0; uint8_t packets = 0; uint32_t pgn = 0;
+        if (!parseAnnounce(msg, totalLen, packets, pgn))
+            return act;
+
+        startSession(msg.sa, 0xFF, totalLen, packets, pgn, nowMs);
+        return act;   // BAM — ответов не требует
+    }
+
+    case kCmRts:
+    {
+        // RTS — peer-to-peer (dst из PS, PDU1). Общий валид как у BAM.
+        uint16_t totalLen = 0; uint8_t packets = 0; uint32_t pgn = 0;
+        if (!parseAnnounce(msg, totalLen, packets, pgn))
+            return act;
+
+        if (msg.dst == localAddr_)
+        {
+            // Активный приём: нас просят CTS. Принимаем всё разом —
+            // буфер сессии вмещает 1785 байт (max 255 пакетов).
+            startSession(msg.sa, msg.dst, totalLen, packets, pgn, nowMs);
+            act.kind = TpAction::Kind::SendCts;
+            act.dst = msg.sa;          // ответ отправителю RTS
+            act.packets = packets;     // CTS byte1: сколько DT мы готовы принять
+            act.totalLen = totalLen;
+            act.totalPackets = packets;
+            act.pgn = pgn;
+            return act;
+        }
+
+        // Чужой обмен (dst != мы): пассивный сниффинг — собираем DT молча,
+        // НЕ отвечаем (иначе на шине окажется второй «получатель»).
+        startSession(msg.sa, msg.dst, totalLen, packets, pgn, nowMs);
+        return act;
+    }
+
+    case kCmEom:
+    {
+        // EOM шлёт ПОЛУЧАТЕЛЬ последнего DT → отправителю: msg.sa = получатель,
+        // msg.dst = отправитель = s.sa. Закрываем его сессию.
+        const uint32_t pgn = static_cast<uint32_t>(msg.data[5]) |
+                             (static_cast<uint32_t>(msg.data[6]) << 8) |
+                             (static_cast<uint32_t>(msg.data[7]) << 16);
+        for (auto& s : sessions_)
+        {
+            if (s.active && s.pgn == pgn && s.sa == msg.dst)
+                s.active = false;
+        }
+        return act;
+    }
+
+    case kCmAbort:
+    {
+        // Abort шлёт любая сторона (отправитель получателю или наоборот).
+        // Сессию ищем по PGN и участию SA в обоих ролях.
+        const uint32_t pgn = static_cast<uint32_t>(msg.data[5]) |
+                             (static_cast<uint32_t>(msg.data[6]) << 8) |
+                             (static_cast<uint32_t>(msg.data[7]) << 16);
+        for (auto& s : sessions_)
+        {
+            if (s.active && s.pgn == pgn &&
+                (s.sa == msg.sa || s.sa == msg.dst))
+                s.active = false;
+        }
+        return act;
+    }
+
+    case kCmCts:
+    default:
+        // CTS — мы через TP не передаём (только приём); прочие контролы —
+        // неизвестные расширения, игнорируем.
+        return act;
     }
 }
 
-bool J1939TransportProtocol::onTpDt(const J1939PgnMsg& msg, J1939AssembledMsg& out)
+bool J1939TransportProtocol::onTpDt(const J1939PgnMsg& msg, uint32_t nowMs,
+                                    J1939AssembledMsg& out, TpAction* action)
 {
-    const TickType_t now = xTaskGetTickCount();
-    const TickType_t timeoutTicks = pdMS_TO_TICKS(Timing::kTransportTimeoutMs);
+    if (action)
+        action->kind = TpAction::Kind::None;
 
-    // Сбросить сессии с истёкшим таймаутом (без переполняющегося сравнения)
-    for (auto& s : sessions_)
-    {
-        if (s.active && (now - s.lastTs) >= timeoutTicks)
-            s.active = false;
-    }
+    // data[0] — номер пакета; при dlc < 2 его нет (dlc==1 — только номер? по
+    // спецификации DT = 1 номер + 7 данных; минимум осмысленного пакета — 2
+    // байта: номер + >=1 данных; dlc<2 — мусор).
+    if (msg.dlc < 2)
+        return false;
 
     for (auto& s : sessions_)
     {
@@ -84,7 +183,7 @@ bool J1939TransportProtocol::onTpDt(const J1939PgnMsg& msg, J1939AssembledMsg& o
             return false;   // потерянный пакет или дубль — ждём нужный номер
 
         const size_t off = static_cast<size_t>(packetN - 1) * 7;
-        size_t chunk = (msg.dlc > 1) ? (msg.dlc - 1) : 0;
+        size_t chunk = msg.dlc - 1;
         if (off + chunk > s.totalLen)
             chunk = (s.totalLen > off) ? (s.totalLen - off) : 0;   // последний пакет
         if (off + chunk > J1939Proto::kJ1939MaxDataLen)
@@ -96,7 +195,7 @@ bool J1939TransportProtocol::onTpDt(const J1939PgnMsg& msg, J1939AssembledMsg& o
         memcpy(&s.data[off], &msg.data[1], chunk);
         s.expectedPacket++;
         s.packetsRemaining--;
-        s.lastTs = now;
+        s.lastMs = nowMs;
 
         if (s.packetsRemaining == 0)
         {
@@ -105,9 +204,33 @@ bool J1939TransportProtocol::onTpDt(const J1939PgnMsg& msg, J1939AssembledMsg& o
             out.sa = s.sa;
             out.len = s.totalLen;
             memcpy(out.data, s.data, s.totalLen);
+
+            // Только АКТИВНЫЙ приём (dst == мы) отвечает EOM: BAM (dst=0xFF)
+            // и пассивный сниффинг молчат — иначе на шине второй получатель.
+            if (action && s.dst == localAddr_)
+            {
+                action->kind = TpAction::Kind::SendEom;
+                action->dst = s.sa;          // EOM: получатель → отправитель
+                action->totalLen = s.totalLen;
+                action->totalPackets = s.totalPackets;
+                action->pgn = s.pgn;
+            }
             return true;
         }
         return false;
     }
     return false;
+}
+
+void J1939TransportProtocol::tick(uint32_t nowMs)
+{
+    // Сравнение через (int32_t) поверх uint32-счётчика мс — корректно при
+    // переполнении (как в Timing::computeWaitMs). Sweep отдельно от onTpDt:
+    // если DT прекратились совсем, сессия закрывается, а не висит вечно.
+    const int32_t timeout = static_cast<int32_t>(Timing::kTransportTimeoutMs);
+    for (auto& s : sessions_)
+    {
+        if (s.active && static_cast<int32_t>(nowMs - s.lastMs) >= timeout)
+            s.active = false;
+    }
 }

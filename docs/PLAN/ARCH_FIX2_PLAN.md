@@ -51,7 +51,7 @@ wsl -d Ubuntu-22.04 -- bash -lc "cd /mnt/e/Projects/Embedded/ESP32/J1939_scaner/
 | 7 | Стек задачи J1939: 6144 -> 8192 + убрать массивы | ☑ |
 | 8 | WS: отправка из event-loop -> sender-задача | ☑ |
 | 9 | Сеть: DNS/captive/netif крайние случаи | ☑ |
-| 10 | TP до полноценного (RTS/CTS/EOM) + host-тесты | ☐ |
+| 10 | TP до полноценного (RTS/CTS/EOM) + host-тесты | ☑ |
 | 11 | Ресурсы и крайние случаи (AppData/длины/UID) | ☐ |
 | 12 | Graceful shutdown задач (J1939/ConfigStore) | ☐ |
 | 13 | Гигиена: event base, мёртвый код, sdkconfig, тесты | ☐ |
@@ -729,7 +729,7 @@ header + payload). За это время очередь событий (256) к
 
 ---
 
-## Шаг 10. TP до полноценного (RTS/CTS/EOM) + host-тесты
+## Шаг 10. TP до полноценного (RTS/CTS/EOM) + host-тесты ✔
 
 **Цель.** Закрыть ревью 2.7 («TP поддерживает только BAM; RTS/CTS молча
 отбрасываются; чтение CM без dlc>=8; kMaxSessions=2»). Расширить до

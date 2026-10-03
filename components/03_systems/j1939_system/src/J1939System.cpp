@@ -100,6 +100,11 @@ esp_err_t J1939System::begin()
         sendField(ctx_, canBitrate_UID);
     }
 
+    // Наш адрес — распознавание RTS «на нас» (TP.CM) в задаче приёма.
+    uint8_t nodeAddr = Hw::kDefaultNodeAddr;
+    ctx_->fields.getByName("canNodeAddr", nodeAddr);
+    tp_.setLocalAddr(nodeAddr);
+
     esp_err_t err = twai_.begin(cfg);
     if (err != ESP_OK)
     {
@@ -204,6 +209,7 @@ void J1939System::onConfigChanged(const field_change_event_t* evt)
         uint8_t v = Hw::kDefaultNodeAddr;
         ctx_->fields.getByName("canNodeAddr", v);
         ESP_LOGI(TAG, "canNodeAddr=%u applied immediately", v);
+        tp_.setLocalAddr(v);   // TP: RTS «на нас» — по новому адресу
         break;
     }
     case canTxTimeoutMs_UID:
@@ -283,6 +289,7 @@ void J1939System::taskLoop()
         }
 
         now = Timing::nowMs();
+        tp_.tick(now);   // sweep таймаутов TP-сессий (DT могли прекратиться)
         if ((int32_t)(now - nextSnapshot) >= 0)   // тик-безопасное сравнение
         {
             sendSnapshot(now);
@@ -369,20 +376,70 @@ void J1939System::processFrame(const TwaiDriver::RxFrame& frame, uint32_t nowMs)
 
     if (m.pgn == Hw::kPgnTpCm)
     {
-        tp_.onTpCm(m);
+        sendTpAction(tp_.onTpCm(m, nowMs));
     }
     else if (m.pgn == Hw::kPgnTpDt)
     {
         // Буфер сборки — член assembled_ (1785+ байт не держим на стеке):
         // onTpDt заполняет его целиком перед возвратом true, переиспользование
-        // безопасно (задача одна).
-        if (tp_.onTpDt(m, assembled_))
+        // безопасно (задача одна). action — EOM только при завершении активного
+        // приёма; для BAM/пассивного сниффинга остаётся None.
+        TpAction act;
+        if (tp_.onTpDt(m, nowMs, assembled_, &act))
             processAssembled(assembled_, nowMs);
+        sendTpAction(act);
     }
     else
     {
         acc_.update(m.sa, m.pgn, m.data, m.dlc, nowMs);
     }
+}
+
+void J1939System::sendTpAction(const TpAction& act)
+{
+    if (act.kind == TpAction::Kind::None)
+        return;
+
+    // TP.CM (PDU1): ID = prio<<26 | PF<<8 | PS(=dst) | SA. По SAE приоритет
+    // TP.CM — 7. Буфер: reserved-байты 0xFF по спецификации.
+    uint8_t buf[8];
+    std::memset(buf, 0xFF, sizeof(buf));
+    switch (act.kind)
+    {
+    case TpAction::Kind::SendCts:
+        // CTS: [17, packets-we-can-receive, 0xFF(max), 0xFF, 0xFF, PGN LE]
+        buf[0] = 17;
+        buf[1] = act.packets;
+        break;
+    case TpAction::Kind::SendEom:
+        // EOM: [19, size LE, total packets, 0xFF, PGN LE]
+        buf[0] = 19;
+        buf[1] = static_cast<uint8_t>(act.totalLen & 0xFF);
+        buf[2] = static_cast<uint8_t>((act.totalLen >> 8) & 0xFF);
+        buf[3] = act.totalPackets;
+        break;
+    default:
+        return;
+    }
+    buf[5] = static_cast<uint8_t>(act.pgn & 0xFF);
+    buf[6] = static_cast<uint8_t>((act.pgn >> 8) & 0xFF);
+    buf[7] = static_cast<uint8_t>((act.pgn >> 16) & 0xFF);
+
+    uint8_t nodeAddr = Hw::kDefaultNodeAddr;
+    ctx_->fields.getByName("canNodeAddr", nodeAddr);
+    uint32_t id = (7u << 26) | (Hw::kPgnTpCm << 8) | nodeAddr;
+    id = (id & 0xFFFF00FFu) | (static_cast<uint32_t>(act.dst) << 8);
+
+    // timeout=0: «кадр поставлен в очередь драйвера» = успех — задача приёма
+    // не ждёт завершения TX (как RQST, см. sendRequest).
+    const char* what = (act.kind == TpAction::Kind::SendCts) ? "CTS" : "EOM";
+    esp_err_t txErr = twai_.transmit(id, buf, sizeof(buf), 0);
+    if (txErr == ESP_ERR_TIMEOUT)
+        ESP_LOGW(TAG, "%s tp pgn=%lu dst=%u tx queue full",
+                 what, (unsigned long)act.pgn, act.dst);
+    else if (txErr != ESP_OK)
+        ESP_LOGW(TAG, "%s tp pgn=%lu dst=%u tx failed: %s",
+                 what, (unsigned long)act.pgn, act.dst, esp_err_to_name(txErr));
 }
 
 void J1939System::processAssembled(const J1939AssembledMsg& msg, uint32_t nowMs)

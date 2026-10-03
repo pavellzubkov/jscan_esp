@@ -47,6 +47,8 @@ private:
     void onJ1939Request(const j1939_request_t* req);
     // Фактическая отправка RQST (вызывается из taskLoop).
     void sendRequest(const j1939_request_t& req);
+    // Трансляция TP-действия (CTS/EOM) в кадр TWAI (вызывается из taskLoop).
+    void sendTpAction(const TpAction& act);
     // Применение TWAI-конфига по CONFIG_CHANGED (canNodeAddr/canTxTimeoutMs сразу,
     // canBitrate — после перезагрузки, с валидацией набора {125/250/500/1000} кбит/с).
     void onConfigChanged(const field_change_event_t* evt);

@@ -10,6 +10,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 set(HOST_TEST_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 set(COMMON_DIR   ${HOST_TEST_DIR}/../../components/01_core/common)
+set(TWAI_DIR     ${HOST_TEST_DIR}/../../components/02_hardware/twai)
 set(J1939_DIR    ${HOST_TEST_DIR}/../../components/03_systems/j1939_system)
 
 add_executable(host_tests
@@ -17,12 +18,15 @@ add_executable(host_tests
     ${COMMON_DIR}/src/J1939Proto.cpp
     ${COMMON_DIR}/src/FieldRegistry.cpp
     ${J1939_DIR}/src/SnapshotAccumulator.cpp
+    ${J1939_DIR}/src/J1939TransportProtocol.cpp
+    ${J1939_DIR}/src/J1939Decoder.cpp
 )
 
 target_include_directories(host_tests PRIVATE
     ${HOST_TEST_DIR}/stubs          # esp_log.h / driver/gpio.h — заглушки вместо IDF
     ${COMMON_DIR}/include
     ${COMMON_DIR}/include/fields
+    ${TWAI_DIR}/include             # TwaiDriver.h — только типы (RxFrame), .cpp не входит
     ${J1939_DIR}/include
 )
 

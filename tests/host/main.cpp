@@ -1,10 +1,13 @@
 // Host-тесты без IDF (C++17). Запуск:
 //   cmake -S tests/host -B build/host && cmake --build build/host && ./build/host/host_tests
-// Покрытие: J1939Proto, FieldRegistry, SnapshotAccumulator, Timing::computeWaitMs.
+// Покрытие: J1939Proto, FieldRegistry, SnapshotAccumulator, Timing::computeWaitMs,
+// J1939TransportProtocol (BAM/RTS/CTS/EOM), J1939Decoder.
 
 #include "AppData.h"
 #include "FieldRegistry.h"
+#include "J1939Decoder.h"
 #include "J1939Proto.h"
+#include "J1939TransportProtocol.h"
 #include "SnapshotAccumulator.h"
 #include "SystemTiming.h"
 #include <cstdio>
@@ -389,11 +392,205 @@ static void test_timing() {
     CHECK(Timing::computeWaitMs(0xFFFFFFF0, 0xFFFFFFF0, 10) == 1);
 }
 
+// ============================================================
+// J1939Decoder (29-бит CAN ID → PGN/SA/dst)
+// ============================================================
+static void test_decoder() {
+    // PDU1 (PF=0xEC < 240): TP.CM, PS = destination address.
+    TwaiDriver::RxFrame f{};
+    f.id = (6u << 26) | (0xECu << 16) | (0x20u << 8) | 0x19u;   // dst=0x20 sa=0x19
+    f.dlc = 8;
+    f.data[0] = 32;
+    J1939PgnMsg m = J1939Decoder::decode(f);
+    CHECK(m.priority == 6);
+    CHECK(m.pgn == 0xEC00);      // PS вырезан из PGN
+    CHECK(m.dst == 0x20);        // но сохранён как адресат
+    CHECK(m.sa == 0x19);
+    CHECK(m.isP2P);
+
+    // PDU2 (PF=0xFF >= 240): PGN групповой, dst = broadcast.
+    f.id = (6u << 26) | (0xFF12u << 8) | 0x19u;
+    m = J1939Decoder::decode(f);
+    CHECK(m.pgn == 0xFF12);
+    CHECK(m.dst == 0xFF);
+    CHECK(!m.isP2P);
+
+    // dlc > 8 усекается до 8.
+    f.dlc = 15;
+    m = J1939Decoder::decode(f);
+    CHECK(m.dlc == 8);
+
+    // peerToPeer: границы PDU1-диапазонов.
+    CHECK(!J1939Decoder::peerToPeer(0));
+    CHECK(J1939Decoder::peerToPeer(0xEFFF));
+    CHECK(!J1939Decoder::peerToPeer(0xF000));
+    CHECK(!J1939Decoder::peerToPeer(0x10000));
+    CHECK(J1939Decoder::peerToPeer(0x10001));
+    CHECK(J1939Decoder::peerToPeer(0x1EFFF));
+    CHECK(!J1939Decoder::peerToPeer(0x1F000));
+}
+
+// ============================================================
+// J1939TransportProtocol (BAM + RTS/CTS/EOM + таймауты)
+// ============================================================
+// Тестовые конструкторы TP.CM/TP.DT.
+static J1939PgnMsg makeCm(uint8_t control, uint8_t sa, uint8_t dst,
+                          uint16_t len, uint8_t packets, uint32_t pgn,
+                          uint8_t dlc = 8) {
+    J1939PgnMsg cm{};
+    cm.pgn = 60416;   // TP.CM
+    cm.sa = sa;
+    cm.dst = dst;
+    cm.dlc = dlc;
+    cm.data[0] = control;
+    cm.data[1] = static_cast<uint8_t>(len & 0xFF);
+    cm.data[2] = static_cast<uint8_t>((len >> 8) & 0xFF);
+    cm.data[3] = packets;
+    cm.data[4] = 0xFF;
+    cm.data[5] = static_cast<uint8_t>(pgn & 0xFF);
+    cm.data[6] = static_cast<uint8_t>((pgn >> 8) & 0xFF);
+    cm.data[7] = static_cast<uint8_t>((pgn >> 16) & 0xFF);
+    return cm;
+}
+
+// TP.DT: data[0] = номер пакета (1..255), data[1..7] = 7 байт данных.
+static J1939PgnMsg makeDt(uint8_t sa, uint8_t packetN, uint8_t fillBase,
+                          uint8_t dlc = 8) {
+    J1939PgnMsg dt{};
+    dt.pgn = 60160;   // TP.DT
+    dt.sa = sa;
+    dt.dst = 0xFF;
+    dt.dlc = dlc;
+    dt.data[0] = packetN;
+    for (int b = 1; b <= 7; ++b)
+        dt.data[b] = static_cast<uint8_t>(fillBase + b - 1);
+    return dt;
+}
+
+static void test_transport_protocol() {
+    const uint8_t kLocalAddr = 25;
+    J1939TransportProtocol tp;
+    J1939AssembledMsg out{};
+    TpAction act;
+
+    // ---------- (1) BAM happy-path: 1785 байт = 255 пакетов ----------
+    tp.setLocalAddr(kLocalAddr);
+    tp.reset();
+    // PGN 0xFE00 (65024), len=1785=0x06F9, packets=255.
+    J1939PgnMsg bam = makeCm(32, 0x10, 0xFF, 1785, 255, 0xFE00);
+    act = tp.onTpCm(bam, 0);
+    CHECK(act.kind == TpAction::Kind::None);   // BAM — ответов не требует
+
+    bool complete = false;
+    for (int i = 1; i <= 255 && !complete; ++i) {
+        J1939PgnMsg dt = makeDt(0x10, static_cast<uint8_t>(i),
+                                static_cast<uint8_t>((i - 1) * 7));
+        act = TpAction{};
+        complete = tp.onTpDt(dt, static_cast<uint32_t>(i * 10), out, &act);
+        if (!complete)
+            CHECK(act.kind == TpAction::Kind::None);
+    }
+    CHECK(complete);
+    CHECK(out.len == 1785);
+    CHECK(out.pgn == 0xFE00);
+    CHECK(out.sa == 0x10);
+    CHECK(act.kind == TpAction::Kind::None);   // BAM — без EOM
+    CHECK(out.data[0] == 0 && out.data[6] == 6);    // пакет 1: fill 0..6
+    CHECK(out.data[7] == 7 && out.data[13] == 13);  // пакет 2: fill 7..13
+    // Пакет 255: off = 254*7 = 1778, fill = uint8_t(1778) — хвост влез целиком.
+    CHECK(out.data[1778] == static_cast<uint8_t>(254 * 7));
+    CHECK(out.data[1784] == static_cast<uint8_t>(254 * 7 + 6));
+
+    // ---------- (2) BAM с неверным packets -> сессия не создаётся ----------
+    tp.reset();
+    J1939PgnMsg badBam = makeCm(32, 0x10, 0xFF, 1785, 100, 0xFE00);  // != 255
+    act = tp.onTpCm(badBam, 0);
+    CHECK(act.kind == TpAction::Kind::None);
+    J1939PgnMsg dt1 = makeDt(0x10, 1, 0);
+    CHECK(!tp.onTpDt(dt1, 10, out, &act));   // сессии нет — пакет отбит
+
+    // ---------- (3) RTS с dlc < 8 -> ignore ----------
+    tp.reset();
+    J1939PgnMsg shortRts = makeCm(16, 0x30, kLocalAddr, 14, 2, 0x123456);
+    shortRts.dlc = 7;                        // обрезан — data[7] мусор
+    act = tp.onTpCm(shortRts, 0);
+    CHECK(act.kind == TpAction::Kind::None);
+    J1939PgnMsg dt2 = makeDt(0x30, 1, 0);
+    CHECK(!tp.onTpDt(dt2, 10, out, &act));   // сессия не создана
+
+    // ---------- (4) RTS на наш адрес -> CTS + активный приём + EOM ----------
+    tp.reset();
+    J1939PgnMsg rts = makeCm(16, 0x30, kLocalAddr, 14, 2, 0x123456);
+    act = tp.onTpCm(rts, 100);
+    CHECK(act.kind == TpAction::Kind::SendCts);
+    CHECK(act.dst == 0x30);                  // ответ — отправителю RTS
+    CHECK(act.packets == 2);                 // ceil(14/7)
+    CHECK(act.totalLen == 14);
+    CHECK(act.totalPackets == 2);
+    CHECK(act.pgn == 0x123456);
+
+    J1939PgnMsg adt1 = makeDt(0x30, 1, 0x40);
+    act = TpAction{};
+    CHECK(!tp.onTpDt(adt1, 110, out, &act));
+    CHECK(act.kind == TpAction::Kind::None);           // ещё не конец
+    J1939PgnMsg adt2 = makeDt(0x30, 2, 0x50);
+    act = TpAction{};
+    CHECK(tp.onTpDt(adt2, 120, out, &act));            // последний пакет
+    CHECK(out.len == 14 && out.sa == 0x30 && out.pgn == 0x123456);
+    CHECK(out.data[0] == 0x40 && out.data[6] == 0x46); // пакет 1
+    CHECK(out.data[7] == 0x50 && out.data[13] == 0x56);// пакет 2 (chunk 7)
+    CHECK(act.kind == TpAction::Kind::SendEom);        // активный приём -> EOM
+    CHECK(act.dst == 0x30);                            // EOM -> отправителю
+    CHECK(act.totalLen == 14 && act.totalPackets == 2);
+    CHECK(act.pgn == 0x123456);
+
+    // ---------- (5) RTS на чужой адрес -> пассивный сниффинг, без ответов ----
+    tp.reset();
+    J1939PgnMsg prts = makeCm(16, 0x30, 0x40, 14, 2, 0xABCDEF);
+    act = tp.onTpCm(prts, 200);
+    CHECK(act.kind == TpAction::Kind::None);           // не отвечаем!
+    J1939PgnMsg pdt1 = makeDt(0x30, 1, 0x10);
+    act = TpAction{};
+    CHECK(!tp.onTpDt(pdt1, 210, out, &act));
+    J1939PgnMsg pdt2 = makeDt(0x30, 2, 0x20);
+    act = TpAction{};
+    CHECK(tp.onTpDt(pdt2, 220, out, &act));            // собрано
+    CHECK(out.len == 14 && out.pgn == 0xABCDEF);
+    CHECK(out.data[0] == 0x10 && out.data[7] == 0x20);
+    CHECK(act.kind == TpAction::Kind::None);           // пассивный — без EOM!
+
+    // ---------- (5b) EOM от чужого получателя закрывает пассивную сессию ----
+    tp.reset();
+    act = tp.onTpCm(makeCm(16, 0x30, 0x40, 14, 2, 0xABCDEF), 300);
+    CHECK(act.kind == TpAction::Kind::None);
+    CHECK(!tp.onTpDt(makeDt(0x30, 1, 0x10), 310, out, &act));
+    // EOM: от получателя (0x40) отправителю (0x30), control=19.
+    J1939PgnMsg eom = makeCm(19, 0x40, 0x30, 14, 2, 0xABCDEF);
+    act = tp.onTpCm(eom, 320);
+    CHECK(act.kind == TpAction::Kind::None);           // закрытие — без ответа
+    CHECK(!tp.onTpDt(makeDt(0x30, 2, 0x20), 330, out, &act)); // сессии нет
+
+    // ---------- (6) таймаут: tick() закрывает брошенную сессию ----------
+    tp.reset();
+    act = tp.onTpCm(makeCm(16, 0x30, 0x40, 14, 2, 0xABCDEF), 1000);
+    CHECK(!tp.onTpDt(makeDt(0x30, 1, 0x10), 1050, out, &act));
+    tp.tick(1050 + Timing::kTransportTimeoutMs);        // sweep по краю таймаута
+    CHECK(!tp.onTpDt(makeDt(0x30, 2, 0x20), 2100, out, &act)); // сессия закрыта
+
+    // DT с dlc < 2 игнорируется.
+    tp.reset();
+    tp.onTpCm(makeCm(32, 0x10, 0xFF, 14, 2, 0xFE00), 0);
+    J1939PgnMsg tiny = makeDt(0x10, 1, 0, /*dlc=*/1);
+    CHECK(!tp.onTpDt(tiny, 10, out, &act));
+}
+
 int main() {
     test_proto();
     test_field_registry();
     test_snapshot_accumulator();
     test_timing();
+    test_decoder();
+    test_transport_protocol();
 
     std::printf("checks=%d failures=%d\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;
