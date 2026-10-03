@@ -62,11 +62,11 @@ void DnsServer::stop() {
 
     running_.store(false);
 
-    // Закрываем сокет для выхода из блокирующего recvfrom
-    if (sock_ >= 0) {
-        close(sock_);
-        sock_ = -1;
-    }
+    // Закрываем сокет для выхода из блокирующего recvfrom. Закрытие — только
+    // через exchange(-1): кто первый тот и закрыл (run() закрывает тем же
+    // способом — без риска double-close переназначенного fd).
+    const int s = sock_.exchange(-1);
+    if (s >= 0) close(s);
 
     if (needWait) {
         // Ждём подтверждение выхода (задача даёт doneSem_ ПЕРЕД удалением
@@ -75,7 +75,9 @@ void DnsServer::stop() {
         // «Задача уже сама вышла до stop()» тоже попадает сюда: бинарный
         // семафор хранит состояние Give — take вернёт pdTRUE мгновенно,
         // и ресурсы освободятся (раньше здесь была утечка doneSem_).
-        if (xSemaphoreTake(doneSem_, 2000 / portTICK_PERIOD_MS) == pdTRUE) {
+        // Таймаут 1000 мс: RCVTIMEO сокета 200 мс — задача выходит из
+        // recvfrom почти сразу после close (stop() зовётся из event-loop).
+        if (xSemaphoreTake(doneSem_, 1000 / portTICK_PERIOD_MS) == pdTRUE) {
             task_ = nullptr;
         } else if (xSemaphoreTake(doneSem_, 100 / portTICK_PERIOD_MS) == pdTRUE) {
             // Сужаем гонку «Give пришёл ровно на границе таймаута»: короткий
@@ -102,30 +104,33 @@ void DnsServer::taskTrampoline(void* arg) {
 }
 
 void DnsServer::run() {
-    sock_ = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    if (sock_ < 0) {
+    const int s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (s < 0) {
         ESP_LOGE(TAG_DNS, "Socket creation failed: %d", errno);
         running_.store(false);
         if (doneSem_) xSemaphoreGive(doneSem_);
         vTaskDelete(nullptr);
         return;
     }
+    sock_.store(s);
 
-    // Устанавливаем timeout для recvfrom
+    // Таймаут recvfrom: 200 мс — цикл быстрее реагирует на running_ и
+    // закрытие сокета в stop() (тот же вызовал stop() из event-loop ждать
+    // doneSem_ дольше не мог, раньше здесь был 1 с).
     struct timeval timeout;
-    timeout.tv_sec = 1;
-    timeout.tv_usec = 0;
-    setsockopt(sock_, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    timeout.tv_sec = 0;
+    timeout.tv_usec = 200000;
+    setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
 
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
     addr.sin_port = htons(port_);
     addr.sin_addr.s_addr = htonl(INADDR_ANY);
 
-    if (bind(sock_, (sockaddr*)&addr, sizeof(addr)) < 0) {
+    if (bind(s, (sockaddr*)&addr, sizeof(addr)) < 0) {
         ESP_LOGE(TAG_DNS, "Bind failed: %d", errno);
-        close(sock_);
-        sock_ = -1;
+        const int closed = sock_.exchange(-1);
+        if (closed >= 0) close(closed);
         running_.store(false);
         if (doneSem_) xSemaphoreGive(doneSem_);
         vTaskDelete(nullptr);
@@ -139,14 +144,20 @@ void DnsServer::run() {
     socklen_t client_len = sizeof(client_addr);
 
     while (running_.load()) {
-        int len = recvfrom(sock_, buffer, sizeof(buffer), 0, 
+        // POSIX: длину структуры адреса надо сбрасывать КАЖДЫЙ раз перед
+        // recvfrom (recvfrom пишет её обратно; старое значение — источник OOB).
+        client_len = sizeof(client_addr);
+        const int fd = sock_.load();
+        int len = recvfrom(fd, buffer, sizeof(buffer), 0,
                           (sockaddr*)&client_addr, &client_len);
-        
+
         if (len < 0) {
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
                 // Timeout - продолжаем цикл
                 continue;
             }
+            // Сокет закрыт stop() во время остановки — штатный выход, не ошибка.
+            if (!running_.load()) break;
             ESP_LOGE(TAG_DNS, "recvfrom failed: %d", errno);
             break;
         }
@@ -159,11 +170,10 @@ void DnsServer::run() {
         handleDnsRequest(buffer, len, client_addr);
     }
 
-    if (sock_ >= 0) {
-        close(sock_);
-        sock_ = -1;
-    }
-    
+    // Закрытие через exchange(-1): stop() мог уже закрыть — тогда no-op.
+    const int closed = sock_.exchange(-1);
+    if (closed >= 0) close(closed);
+
     ESP_LOGI(TAG_DNS, "DNS Server stopped");
     running_.store(false);
     if (doneSem_) xSemaphoreGive(doneSem_);

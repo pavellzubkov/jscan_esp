@@ -91,6 +91,18 @@ static void build_filepath(static_ctx_t* ctx, const char* uri,
     }
 }
 
+// Совпадение Host с доменом: точное равенство ИЛИ суффикс ".<domain>" в
+// конце. strstr запрещён — он даёт ложные совпадения (evilapple.com
+// совпал бы с apple.com).
+static bool host_matches_domain(const char* host, const char* domain) {
+    size_t hlen = strlen(host);
+    size_t dlen = strlen(domain);
+    if (hlen == dlen) return strcmp(host, domain) == 0;
+    // Ровно ".domain" на конце: разделитель — точка перед доменом.
+    return hlen > dlen + 1 && host[hlen - dlen - 1] == '.' &&
+           strcmp(host + (hlen - dlen), domain) == 0;
+}
+
 // Ультра-агрессивный captive-перехват. Работает безусловно: сеть jscan всегда
 // работает как softAP (нет STA-режима), поэтому редирект на портал всегда уместен.
 static esp_err_t is_captive(httpd_req_t* req) {
@@ -136,6 +148,11 @@ static esp_err_t is_captive(httpd_req_t* req) {
 
     // 3. Редирект для известных captive-доменов
     if (host_result == ESP_OK && host_buffer[0] != '\0') {
+        // Отрезаем :port из Host ДО всех сравнений (браузеры шлюзуют порт:
+        // "10.10.10.10:80" иначе не совпало бы с ap_ip -> лишний редирект ->
+        // петля). IPv4 — нас интересует первый ':'; IPv6 не наш случай.
+        if (char* colon = strchr(host_buffer, ':')) *colon = '\0';
+
         const char* captive_domains[] = {
             "msftconnecttest.com",
             "captive.apple.com",
@@ -148,7 +165,7 @@ static esp_err_t is_captive(httpd_req_t* req) {
         };
 
         for (const char* domain : captive_domains) {
-            if (strstr(host_buffer, domain) != nullptr) {
+            if (host_matches_domain(host_buffer, domain)) {
                 ESP_LOGI(TAG, "Captive domain redirect: %s", host_buffer);
                 http::setStatus(req, http::status::kFound);
                 httpd_resp_set_hdr(req, "Location", portal_captive);
@@ -158,7 +175,9 @@ static esp_err_t is_captive(httpd_req_t* req) {
             }
         }
 
-        // 4. Для всех остальных запросов с Host, НЕ равным нашему IP
+        // 4. Для всех остальных запросов с Host, НЕ равным нашему IP.
+        // После отрезания порта Host "10.10.10.10:80" == ap_ip -> БЕЗ
+        // редиректа (happy-path: обращение к порталу по IP с портом).
         if (strcmp(host_buffer, ap_ip) != 0) {
             ESP_LOGI(TAG, "Foreign host redirect: %s", host_buffer);
             http::setStatus(req, http::status::kFound);

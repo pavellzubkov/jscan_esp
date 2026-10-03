@@ -205,9 +205,20 @@ esp_err_t WifiApModule::applyConfig() {
     ipInfo.ip.addr      = ip;
     ipInfo.gw.addr      = ip;
     ipInfo.netmask.addr = Hw::kApNetmask;
-    esp_netif_dhcps_stop(netif_);
-    esp_netif_set_ip_info(netif_, &ipInfo);
-    esp_netif_dhcps_start(netif_);
+    // Коды проверяем и логируем: это конфиг AP (не фатально — продолжаем),
+    // но молчаливый отказ dhcps/set_ip_info маскировал бы проблему.
+    esp_err_t netifErr = esp_netif_dhcps_stop(netif_);
+    if (netifErr != ESP_OK) {
+        ESP_LOGE(TAG, "esp_netif_dhcps_stop failed: %s", esp_err_to_name(netifErr));
+    }
+    netifErr = esp_netif_set_ip_info(netif_, &ipInfo);
+    if (netifErr != ESP_OK) {
+        ESP_LOGE(TAG, "esp_netif_set_ip_info failed: %s", esp_err_to_name(netifErr));
+    }
+    netifErr = esp_netif_dhcps_start(netif_);
+    if (netifErr != ESP_OK) {
+        ESP_LOGE(TAG, "esp_netif_dhcps_start failed: %s", esp_err_to_name(netifErr));
+    }
 
     // Конфигурация AP из AppData (пишет ConfigStore).
     wifi_config_t wifiConfig = {};

@@ -50,7 +50,7 @@ wsl -d Ubuntu-22.04 -- bash -lc "cd /mnt/e/Projects/Embedded/ESP32/J1939_scaner/
 | 6 | TWAI: счётчики потерь + дренаж + неблок. TX | ☑ |
 | 7 | Стек задачи J1939: 6144 -> 8192 + убрать массивы | ☑ |
 | 8 | WS: отправка из event-loop -> sender-задача | ☑ |
-| 9 | Сеть: DNS/captive/netif крайние случаи | ☐ |
+| 9 | Сеть: DNS/captive/netif крайние случаи | ☑ |
 | 10 | TP до полноценного (RTS/CTS/EOM) + host-тесты | ☐ |
 | 11 | Ресурсы и крайние случаи (AppData/длины/UID) | ☐ |
 | 12 | Graceful shutdown задач (J1939/ConfigStore) | ☐ |
@@ -664,7 +664,7 @@ header + payload). За это время очередь событий (256) к
 
 ---
 
-## Шаг 9. Сеть: DNS/captive/netif крайние случаи
+## Шаг 9. Сеть: DNS/captive/netif крайние случаи ✔
 
 **Цель.** Закрыть ревью 2.7 (DNS-гонки, captive-редирект, непроверенные netif).
 

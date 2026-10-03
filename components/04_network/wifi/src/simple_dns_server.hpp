@@ -23,7 +23,9 @@ private:
     std::atomic<bool> running_{false};
     TaskHandle_t task_{nullptr};
     SemaphoreHandle_t doneSem_{nullptr};   // сигнал о завершении задачи в run()
-    int sock_{-1};
+    // atomic: пишет stop() (main/event-loop) и run() (задача DNS) — закрывать
+    // только через exchange(-1), чтобы не было double-close переназначенного fd.
+    std::atomic<int> sock_{-1};
     uint16_t port_{53};
     uint32_t redirect_addr_;
 };
