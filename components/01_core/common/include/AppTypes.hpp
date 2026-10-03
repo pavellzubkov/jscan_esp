@@ -31,13 +31,15 @@ struct FixedString {
   const char *c_str() const { return data; }
 };
 
-// Домен (владелец/подсистема) поля. Совпадает с файлом-доменом в DataFields.inc
-// и используется для контроля владения записью runtime-полей (см. FieldRegistry).
+// Домен (владелец/подсистема) поля. Список доменов — Domains.inc (единый
+// источник); используется для контроля владения записью runtime-полей
+// (см. FieldRegistry).
 enum class FieldDomain : uint8_t {
-  WIFI,
-  TWAI,
-  SNAPSHOT,
-  SYSTEM,
+#define DOMAIN_ENTRY(x) x,
+#define DATA_FIELD(...)          // пусто: поля в enum не входят
+#include "Domains.inc"
+#undef DOMAIN_ENTRY
+#undef DATA_FIELD
   PROTOCOL   // sentinel: пишущий по протоколу (не владеет ни одним runtime-полем)
 };
 

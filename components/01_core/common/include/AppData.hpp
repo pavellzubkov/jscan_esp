@@ -10,46 +10,40 @@
 // ================================================================
 // Реестр полей системы: доменные .inc-файлы включены явно, чтобы
 // избежать директив препроцессора внутри макросов (UB).
-//
-// Домены (порядок определяет порядок сер/порядок config-blob,
-// на UID не влияет — UID = fnv1a32(имя)&0xFFFF) :
-//   WifiFields.inc     → FieldDomain::WIFI
-//   TwaiFields.inc     → FieldDomain::TWAI
-//   SnapshotFields.inc → FieldDomain::SNAPSHOT
-//   SystemFields.inc   → FieldDomain::SYSTEM
+// Список доменов и порядок блоков — единый источник Domains.inc
+// (порядок определяет порядок членов/порядок config-blob,
+// на UID не влияет — UID = fnv1a32(имя)&0xFFFF).
 // ================================================================
 
 // ---------------------------------------------------------------
 // Структура AppData (плоская сериализуемая схема)
 // ---------------------------------------------------------------
 #undef DATA_FIELD
+#define DOMAIN_ENTRY(...)
 // {} — value-init: до вызова initAppDataDefault (в конструкторе AppContext)
 // поля гарантированно нулевые, а не мусор со стека/кучи.
 #define DATA_FIELD(type, name, def, min, max, validator, isConfig, readonly) type name{};
 
 struct AppData {
-#include "WifiFields.inc"
-#include "TwaiFields.inc"
-#include "SnapshotFields.inc"
-#include "SystemFields.inc"
+#include "Domains.inc"
 };
 
 #undef DATA_FIELD
+#undef DOMAIN_ENTRY
 
 // ---------------------------------------------------------------
 // Инициализация по умолчанию
 // ---------------------------------------------------------------
 inline void initAppDataDefault(AppData& data) {
 #undef DATA_FIELD
+#define DOMAIN_ENTRY(...)
 #define DATA_FIELD(type, name, def, min, max, validator, isConfig, readonly) \
     data.name = (def);
 
-#include "WifiFields.inc"
-#include "TwaiFields.inc"
-#include "SnapshotFields.inc"
-#include "SystemFields.inc"
+#include "Domains.inc"
 
 #undef DATA_FIELD
+#undef DOMAIN_ENTRY
 }
 
 // ---------------------------------------------------------------
@@ -71,8 +65,8 @@ struct FieldMeta {
 // 0xFFFF зарезервирован (не используется как UID поля) — защита от коллизий.
 constexpr uint16_t FULL_ID = 0xFFFF; // резерв: не является валидным UID поля
 
-#undef FIELD_DOMAIN
 #undef DATA_FIELD
+#define DOMAIN_ENTRY(...)
 #define DATA_FIELD(type, name, def, min, max, validator, isConfig, readonly) \
     { \
         fieldUid(#name), \
@@ -88,20 +82,10 @@ constexpr uint16_t FULL_ID = 0xFFFF; // резерв: не является ва
     }, \
 
 constexpr inline FieldMeta g_fieldMeta[] = {
-#define FIELD_DOMAIN FieldDomain::WIFI
-#include "WifiFields.inc"
-#undef FIELD_DOMAIN
-#define FIELD_DOMAIN FieldDomain::TWAI
-#include "TwaiFields.inc"
-#undef FIELD_DOMAIN
-#define FIELD_DOMAIN FieldDomain::SNAPSHOT
-#include "SnapshotFields.inc"
-#undef FIELD_DOMAIN
-#define FIELD_DOMAIN FieldDomain::SYSTEM
-#include "SystemFields.inc"
-#undef FIELD_DOMAIN
+#include "Domains.inc"
 };
 #undef DATA_FIELD
+#undef DOMAIN_ENTRY
 
 // NOLINTNEXTLINE(clang-diagnostic-sizeof-array-div)
 constexpr size_t kAppFieldCount = sizeof(g_fieldMeta) / sizeof(g_fieldMeta[0]);
@@ -117,10 +101,10 @@ constexpr bool checkFieldUids() {
     }
     return true;
 }
-static_assert(checkFieldUids(), "UID collision or UID==FULL_ID(0xFFFF) in DataFields.inc");
+static_assert(checkFieldUids(), "UID collision or UID==FULL_ID(0xFFFF) in Domains.inc");
 
 // ---------------------------------------------------------------
-// Размерные константы, выводимые из схемы (DataFields.inc).
+// Размерные константы, выводимые из схемы (Domains.inc).
 // Автоматически пересчитываются при добавлении/изменении полей,
 // поэтому не нужно вручную поддерживать магические числа в модулях
 // (в частности, в CommunicationModule для буфера пакетов).
@@ -155,15 +139,14 @@ inline constexpr size_t kAppSerializeDataMax = computeSerializeDataMax();
 // UID-константы для полей (используются в событиях)
 // ---------------------------------------------------------------
 #undef DATA_FIELD
+#define DOMAIN_ENTRY(...)
 #define DATA_FIELD(type, name, def, min, max, validator, isConfig, readonly) \
     constexpr uint16_t name##_UID = fieldUid(#name);
 
-#include "WifiFields.inc"
-#include "TwaiFields.inc"
-#include "SnapshotFields.inc"
-#include "SystemFields.inc"
+#include "Domains.inc"
 
 #undef DATA_FIELD
+#undef DOMAIN_ENTRY
 
 // Примечание: поиск поля по имени/указателю доступен через FieldRegistry
 // (getMetaByName/getByUid) — локальные findField/getFieldPtr/getFieldAs
