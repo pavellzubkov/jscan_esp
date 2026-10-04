@@ -235,4 +235,4 @@ auto st = ctx->fields.writeFieldDetectChange(uid, &value, sizeof(T),
 - [x] Шаг 7 — seq дроп дублей
 - [x] Шаг 8 — golden-тест UID
 - [x] Шаг 9 — удаление мёртвого + updateField
-- [ ] Финал: host-тесты зелёные + чистый `idf.py build`
+- [x] Финал: host-тесты зелёные + чистый `idf.py build`
