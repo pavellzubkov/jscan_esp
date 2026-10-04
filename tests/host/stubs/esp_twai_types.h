@@ -12,6 +12,8 @@ struct twai_node_base;                        // opaque (указатель в T
 typedef struct twai_node_base* twai_node_handle_t;
 
 struct twai_rx_done_event_data_t;             // opaque (только указатель)
+struct twai_state_change_event_data_t;        // opaque (только указатель;
+                                              // TwaiDriver::stateChangeCb, шаг 2)
 
 // Кадр драйвера (по мотивам IDF: TwaiDriver::TxBlock хранит по значению).
 typedef struct {
