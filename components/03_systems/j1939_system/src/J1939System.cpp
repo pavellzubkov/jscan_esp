@@ -183,7 +183,7 @@ void J1939System::onJ1939Request(const j1939_request_t* req)
         return;
 
     // Event-loop задача не блокируется: только ставим запрос в очередь,
-    // отправка (TX до canTxTimeoutMs) выполняется в taskLoop.
+    // отправка (TX timeout=0) выполняется в taskLoop.
     if (xQueueSend(reqQueue_, req, 0) != pdTRUE)
         ESP_LOGW(TAG, "request queue full, dropping RQST pgn=%lu dst=%u",
                  (unsigned long)req->pgn, req->dstAddr);
@@ -206,18 +206,13 @@ void J1939System::sendRequest(const j1939_request_t& req)
     uint32_t id = (6u << 26) | (Hw::kPgnRequest << 8) | nodeAddr;
     id = (id & 0xFFFF00FFu) | (static_cast<uint32_t>(req.dstAddr) << 8);
 
-    uint16_t txTimeoutMs = Hw::kDefaultTxTimeoutMs;
-    ctx_->fields.getByUid(canTxTimeoutMs_UID, txTimeoutMs);
-
-    // canTxTimeoutMs — ограничение драйвера (поле в конфиге/протоколе),
-    // но TX RQST больше НЕ ждёт окончания передачи: timeout=0 = «кадр
-    // поставлен в очередь драйвера» (ESP_OK). Блокировка задачи на
-    // canTxTimeoutMs открывала окно для дропов RX, пока ISR сыпал кадры.
-    // fail_retry_cnt=-1 — драйвер ретранслирует сам.
+    // TX RQST не ждёт окончания передачи: timeout=0 = «кадр поставлен
+    // в очередь драйвера» (ESP_OK) — блокировка задачи открывала бы окно
+    // для дропов RX. Драйвер ретранслирует сам (fail_retry_cnt).
     esp_err_t txErr = twai_.transmit(id, buf, sizeof(buf), 0);
     if (txErr == ESP_ERR_TIMEOUT)
-        ESP_LOGW(TAG, "RQST pgn=%lu tx queue full (canTxTimeoutMs=%u ignored for wait)",
-                 (unsigned long)req.pgn, txTimeoutMs);
+        ESP_LOGW(TAG, "RQST pgn=%lu tx queue full",
+                 (unsigned long)req.pgn);
     else if (txErr != ESP_OK)
         ESP_LOGW(TAG, "RQST pgn=%lu tx failed: %s", (unsigned long)req.pgn,
                  esp_err_to_name(txErr));
@@ -237,14 +232,6 @@ void J1939System::onConfigChanged(const field_change_event_t* evt)
             ESP_LOGW(TAG, "read canNodeAddr failed, applying default");
         ESP_LOGI(TAG, "canNodeAddr=%u applied immediately", v);
         tp_.setLocalAddr(v);   // TP: RTS «на нас» — по новому адресу
-        break;
-    }
-    case canTxTimeoutMs_UID:
-    {
-        uint16_t v = Hw::kDefaultTxTimeoutMs;
-        if (!ctx_->fields.getByUid(canTxTimeoutMs_UID, v))
-            ESP_LOGW(TAG, "read canTxTimeoutMs failed, keeping default");
-        ESP_LOGI(TAG, "canTxTimeoutMs=%u applied immediately", v);
         break;
     }
     case canBitrate_UID:
@@ -291,8 +278,8 @@ void J1939System::taskLoop()
     // укладывается в таймаут 2000 мс даже без отдельного события.
     while (!stop_.load())
     {
-        // RQST от клиентов обрабатываем в своей задаче: TX может блокировать
-        // до canTxTimeoutMs — нельзя делать это в event-loop задаче.
+        // RQST от клиентов обрабатываем в своей задаче (не в event-loop):
+        // TX синхронизирован мьютексом драйвера и может ждать очередь.
         j1939_request_t req;
         while (xQueueReceive(reqQueue_, &req, 0) == pdTRUE)
             sendRequest(req);

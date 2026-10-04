@@ -37,7 +37,7 @@ private:
     J1939AssembledMsg assembled_{};
 
     // Очередь RQST от клиентов (J1939_REQUEST): событие (event-loop) только
-    // ставит запрос, TX с блокировкой до canTxTimeoutMs выполняется в taskLoop.
+    // ставит запрос, TX выполняется в taskLoop.
     QueueHandle_t reqQueue_ = nullptr;
 
     // Graceful shutdown (паттерн DnsServer::stop): dtor ставит stop_ ->
@@ -68,7 +68,7 @@ private:
     void sendRequest(const j1939_request_t& req);
     // Трансляция TP-действия (CTS/EOM) в кадр TWAI (вызывается из taskLoop).
     void sendTpAction(const TpAction& act);
-    // Применение TWAI-конфига по CONFIG_CHANGED (canNodeAddr/canTxTimeoutMs сразу,
+    // Применение TWAI-конфига по CONFIG_CHANGED (canNodeAddr сразу,
     // canBitrate — после перезагрузки, с валидацией набора {125/250/500/1000} кбит/с).
     void onConfigChanged(const field_change_event_t* evt);
     // Публикация runtime-полей twai* (~1 раз в секунду).

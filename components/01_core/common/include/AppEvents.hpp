@@ -25,9 +25,7 @@ enum class app_event_id_t : int32_t {
     CONFIG_CHANGED,         // поле изменилось (данные: field_change_event_t, uid)
     WIFI_REAPPLY,           // отложенное применение конфига AP (без данных)
     COMMUNICATION_SEND,     // отправить поле WS-клиентам (данные: communication_send_event_t)
-    FACTORY_RESET,          // сброс к заводским настройкам (без данных)
-    OTA_BEGIN,              // начало OTA: flash-операции идут (без данных)
-    OTA_END                 // конец OTA: flash-операции завершены (без данных)
+    FACTORY_RESET           // сброс к заводским настройкам (без данных)
 };
 
 // Максимальная длина WS-сообщения = лимит батча снапшота (см. J1939Proto).
@@ -145,16 +143,6 @@ struct AppEventPayload<app_event_id_t::COMMUNICATION_SEND> {
 };
 template <>
 struct AppEventPayload<app_event_id_t::FACTORY_RESET> {
-    using type = void;
-    static constexpr bool sized = false;
-};
-template <>
-struct AppEventPayload<app_event_id_t::OTA_BEGIN> {
-    using type = void;
-    static constexpr bool sized = false;
-};
-template <>
-struct AppEventPayload<app_event_id_t::OTA_END> {
     using type = void;
     static constexpr bool sized = false;
 };

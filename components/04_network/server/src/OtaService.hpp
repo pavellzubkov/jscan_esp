@@ -44,12 +44,6 @@ private:
                                     void* cb_arg, std::atomic<size_t>* received,
                                     uint32_t timeoutMs);
 
-    // Перевести систему в безопасное состояние перед flash-операциями
-    // (событие OTA_BEGIN). В jscan термоконтура нет — только уведомление.
-    void enterOta();
-    // Вернуть управление после flash-операций (событие OTA_END).
-    void exitOta();
-
     AppContext* ctx_ = nullptr;
     LittleFsService* fs_ = nullptr;
 

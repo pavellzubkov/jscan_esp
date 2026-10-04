@@ -229,39 +229,6 @@ public:
         return true;
     }
 
-    // Подписка на системные события (default loop): WIFI_EVENT/IP_EVENT и т.п.
-    // Возвращает instance для ручного unregister (или nullptr при ошибке).
-    esp_event_handler_instance_t subscribeDefault(esp_event_base_t event_base,
-                                                  int32_t event_id,
-                                                  esp_event_handler_t handler,
-                                                  void* arg = nullptr) {
-        if (!handler) return nullptr;
-
-        std::lock_guard<std::mutex> lock(poolMux_);
-        Subscription* sub = reserveSubscription();
-        if (!sub) {
-            ESP_LOGE(TAG, "Subscription pool exhausted (%u/%u)",
-                     static_cast<unsigned>(subscriptionCount_),
-                     static_cast<unsigned>(kMaxSubscriptions));
-            return nullptr;
-        }
-        sub->base = event_base;
-        sub->id = event_id;
-        sub->loop = nullptr;  // default loop
-        sub->obj = arg;
-
-        esp_err_t err = esp_event_handler_instance_register(
-            event_base, event_id, handler, arg, &sub->instance);
-        if (err != ESP_OK) {
-            releaseSubscription(sub);  // слот не утекает при ошибке
-            ESP_LOGE(TAG, "Failed to subscribe to event %d: %s",
-                     event_id, esp_err_to_name(err));
-            return nullptr;
-        }
-        subscriptionCount_++;
-        return sub->instance;
-    }
-
     // Публикация события БЕЗ данных
     template <typename EventEnum>
     bool post(esp_event_base_t event_base, EventEnum event_id) {

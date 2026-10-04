@@ -1,7 +1,7 @@
 #pragma once
 #include "AppContext.hpp"
 #include "AppEvents.hpp"
-#include <cstring>
+#include "esp_log.h"
 
 // Отправка одного поля по коммуникационному модулю (broadcast).
 // Возврат post намеренно не проверяется: дроп события (очередь event-loop
@@ -12,9 +12,12 @@ inline void sendField(AppContext* ctx, uint16_t uid)
     postEvent<app_event_id_t::COMMUNICATION_SEND>(ctx->events, evt);
 }
 
-// Запись runtime-поля с diff+push: под AppDataLock сравнивает новое значение
-// со старым, сохраняет, и если поле реально изменилось — пушит его клиентам
-// (PARAM_PUSH broadcast). Возвращает true при изменении.
+// Запись runtime-поля с diff+push: обёртка над writeFieldDetectChange —
+// домен берётся из meta (владелец пишет поле своего домена), сравнение
+// старого/нового и лок — внутри реестра (одна атомарная операция).
+// Если реально изменилось — пушит поле клиентам (PARAM_PUSH broadcast).
+// Возвращает true при изменении; ошибки записи (READONLY_DENIED /
+// OUT_OF_RANGE / UNKNOWN_UID) возвращаются наружу как false + лог.
 // Аналог «агрегатора» из TEMP_PID, но без центрального модуля: владелец
 // домена пишет своё поле сам, а эта функция избавляет от безусловного
 // sendField и лишнего PUSH-спама.
@@ -26,21 +29,21 @@ bool updateField(AppContext* ctx, uint16_t uid, const T& value)
     if (!ctx)
         return false;
 
-    uint8_t oldBuf[kAppMaxFieldSize + 8];
-    size_t oldLen = 0;
-    bool changed = false;
-
+    const FieldMeta* m = ctx->fields.getMetaByUid(uid);
+    if (!m)
     {
-        AppDataLock lock(ctx);   // чтение+запись — одна атомарная операция
-        const bool hadOld = ctx->fields.readField(uid, oldBuf, sizeof(oldBuf),
-                                                  &oldLen);
-        ctx->fields.writeFieldScalar(uid, value);
+        ESP_LOGW("LogicUtils", "updateField: unknown uid=0x%04X", uid);
+        return false;
+    }
 
-        uint8_t newBuf[kAppMaxFieldSize + 8];
-        size_t newLen = 0;
-        ctx->fields.readField(uid, newBuf, sizeof(newBuf), &newLen);
-        changed = !hadOld || oldLen != newLen ||
-                  memcmp(oldBuf, newBuf, oldLen) != 0;
+    bool changed = false;
+    const FieldWriteStatus st = ctx->fields.writeFieldDetectChange(
+        uid, &value, sizeof(T), m->domain, &changed);
+    if (st != FieldWriteStatus::OK)
+    {
+        ESP_LOGW("LogicUtils", "updateField uid=0x%04X failed, st=%d",
+                 uid, static_cast<int>(st));
+        return false;
     }
 
     if (changed)

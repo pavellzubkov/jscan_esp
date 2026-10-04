@@ -188,26 +188,26 @@ J1939System не входит в host-сборку, байты не провер
 
 ### 9a. canTxTimeoutMs → удалить
 
-- [ ] `TwaiFields.inc:16` (поле), `HardwareConfig.hpp:27`
+- [x] `TwaiFields.inc:16` (поле), `HardwareConfig.hpp:27`
       (`kDefaultTxTimeoutMs`);
-- [ ] `J1939System.cpp:208-219` (чтение+лог в `sendRequest` — остаётся
+- [x] `J1939System.cpp:208-219` (чтение+лог в `sendRequest` — остаётся
       `ESP_LOGW` про queue full без упоминания поля), `:241-248` (case),
       комменты `J1939System.hpp:40,60`;
-- [ ] `tests/host/main.cpp:174` (CHECK убрать).
+- [x] `tests/host/main.cpp:174` (CHECK убрать) + golden-таблица.
 
 ### 9b. OTA_BEGIN/END → удалить
 
-- [ ] `AppEvents.hpp:29-30` (enum), `:151-160` (traits);
-- [ ] `OtaService.cpp:76-84` (`enterOta/exitOta`) — убрать методы и их
+- [x] `AppEvents.hpp:29-30` (enum), `:151-160` (traits);
+- [x] `OtaService.cpp:76-84` (`enterOta/exitOta`) — убрать методы и их
       вызовы (grep при исполнении), комменты `OtaService.hpp:48-50`.
 
 ### 9c. EventManager::subscribeDefault → удалить
 
-- [ ] `EventManager.hpp:232-263` (0 вызовов).
+- [x] `EventManager.hpp:232-263` (0 вызовов).
 
 ### 9d. updateField → обёртка над writeFieldDetectChange
 
-- [ ] `LogicUtils.hpp:24-49` — убрать свой read/write/read; брать домен из
+- [x] `LogicUtils.hpp:24-49` — убрать свой read/write/read; брать домен из
       meta:
 
 ```cpp
@@ -234,5 +234,5 @@ auto st = ctx->fields.writeFieldDetectChange(uid, &value, sizeof(T),
 - [x] Шаг 6 — rate-limit входящих WS
 - [x] Шаг 7 — seq дроп дублей
 - [x] Шаг 8 — golden-тест UID
-- [ ] Шаг 9 — удаление мёртвого + updateField
+- [x] Шаг 9 — удаление мёртвого + updateField
 - [ ] Финал: host-тесты зелёные + чистый `idf.py build`

@@ -73,16 +73,6 @@ void OtaService::init(AppContext* ctx, LittleFsService* fs) {
     fs_ = fs;
 }
 
-void OtaService::enterOta() {
-    if (!ctx_) return;
-    postEvent<app_event_id_t::OTA_BEGIN>(ctx_->events);
-}
-
-void OtaService::exitOta() {
-    if (!ctx_) return;
-    postEvent<app_event_id_t::OTA_END>(ctx_->events);
-}
-
 // ---------------------------------------------------------------
 // Потоковый приём тела запроса: читает ровно expected байт и кормит
 // ими callback. Есть ОБЩИЙ дедлайн timeoutMs на весь приём: таймаут
@@ -235,14 +225,9 @@ esp_err_t OtaService::handleStorageUpload(httpd_req_t* req) {
         return httpd_resp_sendstr(req, R"({"error":"upload interrupted"})");
     }
 
-    // Дальше — flash-операции: WdtPause/enterOta только на этой фазе
+    // Дальше — flash-операции: WdtPause только на этой фазе
     // (приём в RAM кэш не блокировал, расширять WDT не требовалось).
     WdtPause wdtPause;
-    enterOta();
-    struct OtaEndGuard {
-        OtaService* self;
-        ~OtaEndGuard() { self->exitOta(); }
-    } otaEndGuard{ this };
 
     // Файловая система размонтируется, чтобы не модифицировать образ во время записи.
     esp_err_t err = fs_->unmount();
@@ -353,14 +338,8 @@ esp_err_t OtaService::handleAppUpload(httpd_req_t* req) {
     }
 
     // Как и для storage: расширить Task WDT на время записи образа. При успехе
-    // esp_restart() не вернёт управление — guard'ы не выполнятся, но это не важно
-    // (устройство перезагружается).
+    // esp_restart() не вернёт управление (устройство перезагружается).
     WdtPause wdtPause;
-    enterOta();
-    struct OtaEndGuard {
-        OtaService* self;
-        ~OtaEndGuard() { self->exitOta(); }
-    } otaEndGuard{ this };
 
     const esp_partition_t* part = esp_ota_get_next_update_partition(nullptr);
     if (!part) {

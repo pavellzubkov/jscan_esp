@@ -175,8 +175,6 @@ static void test_field_registry() {
     // Дефолты через getByName (raw).
     uint8_t ch = 0;
     CHECK(reg.getByName("apChannel", ch) && ch == 6);
-    uint16_t timeout = 0;
-    CHECK(reg.getByName("canTxTimeoutMs", timeout) && timeout == 100);
 
     // Дефолты через getByUid (UID-константы): тот же raw-доступ, но опечатка
     // в имени не скомпилируется. FULL_ID (0xFFFF) — невалидный UID -> false.
@@ -887,7 +885,6 @@ static void test_field_uid_stability() {
         {"wifiApMode", 0x0A3E},
         {"canNodeAddr", 0xF9FA},
         {"canBitrate", 0x43F2},
-        {"canTxTimeoutMs", 0xB170},
         {"canAutoRecover", 0x9712},
         {"twaiState", 0x8B5F},
         {"twaiTxErr", 0x3D79},

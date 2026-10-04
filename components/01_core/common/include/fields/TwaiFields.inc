@@ -9,12 +9,6 @@ DATA_FIELD(uint8_t,     canNodeAddr,      Hw::kDefaultNodeAddr, 0, 253, CFG_UINT
 // @unit bps
 DATA_FIELD(uint32_t,    canBitrate,       Hw::kCanBitrate, 125000, 1000000, CFG_ENUM, true, false)
 
-// @label Таймаут TX
-// @description Таймаут передачи кадра CAN
-// @group TWAI
-// @unit мс
-DATA_FIELD(uint16_t,    canTxTimeoutMs,   Hw::kDefaultTxTimeoutMs, 10, 500, CFG_UINT, true, false)
-
 // @label Автовосстановление
 // @description Автоматический recover драйвера при BUS_OFF
 // @group TWAI
