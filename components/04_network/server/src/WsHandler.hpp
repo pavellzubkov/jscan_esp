@@ -23,6 +23,12 @@ private:
     // Потолок подключений WS: один источник для массива, проверки в
     // add_client и локальной копии в deliverItem.
     static constexpr int kMaxClients = 10;
+    // Rate-limit входящих кадров (TEXT/BINARY) на сокет: окно 1 с,
+    // не больше 50 кадров/с — флуд клиента не должен заливать event-loop.
+    // Обработчики httpd — одна задача: слоты без лока; сброс в
+    // add_client/remove_client (remove_client из sender-задачи — гонка
+    // только на сбросе, приемлема: худшее — окно не сброшено).
+    static constexpr uint32_t kMaxInboundFramesPerSec = 50;
     // Глубина очереди отправки (слотов под указатели). Payload копируется
     // в heap: 8 * kMaxWsMessageLen (~8 КБ) = ~64 КБ PSRAM в худшем случае.
     static constexpr size_t kTxQueueDepth = 8;
@@ -46,6 +52,14 @@ private:
     std::atomic<httpd_handle_t> server_{nullptr};
     int connected_clients_[kMaxClients];
     int client_count_ = 0;
+
+    // Слот окна rate-limit на сокет: {sockfd, начало окна (мс), кадров в окне}.
+    struct RxRateSlot {
+        int      sockfd   = -1;
+        uint32_t windowMs = 0;
+        uint32_t count    = 0;
+    };
+    RxRateSlot rxRate_[kMaxClients]{};
     // Подписка на WS_MESSAGE_SEND выполняется один раз за время жизни объекта
     // (reg() может вызываться многократно — рестарт httpd в NetworkController).
     bool subs_registered_ = false;
@@ -62,6 +76,7 @@ private:
     std::atomic<bool>  senderStop_{false};
     std::atomic<uint32_t> txSent_{0};    // успешно отправленные кадры
     std::atomic<uint32_t> txDrops_{0};   // дропы очереди/копий
+    std::atomic<uint32_t> rxDrops_{0};   // дропы rate-limit входящих кадров
 
     // Подписка на app_event_id_t::WS_MESSAGE_SEND (через EventManager)
     void onWsMessageSend(const ws_message_t* msg);
@@ -84,6 +99,10 @@ private:
     void add_client(int sockfd);
     void remove_client(int sockfd);
     void cleanup_clients();
+    // Rate-limit входа: true — кадр принимаем; false — окно переполнено
+    // (дроп). Слот заведение лениво при первом кадре сокета.
+    bool allowInboundFrame(int sockfd);
+    void resetRxRate(int sockfd);
     // Рассылка broadcast-item'а: локальная копия списка сокетов под локом,
     // отправка вне лока (вызывается только из sender-задачи).
     void send_to_all_clients(const char* data, size_t len);

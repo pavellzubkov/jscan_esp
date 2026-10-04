@@ -1,4 +1,5 @@
 #include "WsHandler.hpp"
+#include "SystemTiming.hpp"
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 #include <cstring>
@@ -39,6 +40,7 @@ void WsHandler::add_client(int sockfd) {
   bool already_connected = false;
   bool rejected_full = false;
   int new_count = 0;
+  resetRxRate(sockfd);   // новое соединение — свежее окно rate-limit
 
   {
     std::lock_guard<std::mutex> lock(clientMux_);
@@ -101,6 +103,7 @@ void WsHandler::add_client(int sockfd) {
 void WsHandler::remove_client(int sockfd) {
   bool removed = false;
   int count_for_log = 0;
+  resetRxRate(sockfd);   // сокет уходит — освобождаем слот окна
 
   {
     std::lock_guard<std::mutex> lock(clientMux_);
@@ -127,6 +130,46 @@ void WsHandler::remove_client(int sockfd) {
     msg.sockfd = sockfd;
     postEvent<app_event_id_t::WS_CLIENT_DISCONNECTED>(ctx_->events, msg);
   }
+}
+
+// Rate-limit входящих TEXT/BINARY-кадров: окно 1 с (Timing::nowMs, монотонно,
+// переполнение uint32 через ~49 суток корректно через беззнаковый вычет).
+// Лок не нужен: обработчики httpd — одна задача (слот только читает
+// add/remove, сбрасывает resetRxRate). Слот лениво заводится при первом кадре.
+bool WsHandler::allowInboundFrame(int sockfd) {
+    const uint32_t now = Timing::nowMs();
+    RxRateSlot* freeSlot = nullptr;
+    for (auto& s : rxRate_) {
+        if (s.sockfd == sockfd) {
+            if (static_cast<uint32_t>(now - s.windowMs) >= 1000) {
+                s.windowMs = now;
+                s.count = 0;
+            }
+            if (++s.count > kMaxInboundFramesPerSec) {
+                return false;
+            }
+            return true;
+        }
+        if (!freeSlot && s.sockfd == -1) {
+            freeSlot = &s;
+        }
+    }
+    if (!freeSlot) {
+        return true;   // слоты кончились — без дедупа лучше, чем глушить кадры
+    }
+    freeSlot->sockfd = sockfd;
+    freeSlot->windowMs = now;
+    freeSlot->count = 1;
+    return true;
+}
+
+void WsHandler::resetRxRate(int sockfd) {
+    for (auto& s : rxRate_) {
+        if (s.sockfd == sockfd) {
+            s = RxRateSlot{};
+            return;
+        }
+    }
 }
 
 void WsHandler::cleanup_clients() {
@@ -276,6 +319,18 @@ esp_err_t WsHandler::ws_handler(httpd_req_t *req) {
     ESP_LOGW(TAG, "Invalid WS message size: %d", ws_pkt.len);
     self->remove_client(sockfd);
     return ESP_ERR_INVALID_SIZE;
+  }
+
+  // Rate-limit до malloc/post: флуд TEXT/BINARY не заливает event-loop.
+  // Только дроп кадра — соединение не трогаем (control-кадры выше не идут).
+  if (!self->allowInboundFrame(sockfd)) {
+    const uint32_t n = self->rxDrops_.fetch_add(1, std::memory_order_relaxed) + 1;
+    // Rate-limit лога: первый дроп и каждый 50-й.
+    if (n == 1 || (n % 50) == 0) {
+      ESP_LOGW(TAG, "RX rate limit exceeded, frame dropped (sockfd=%d, total=%u)",
+               sockfd, (unsigned)n);
+    }
+    return ESP_OK;
   }
 
   // malloc + unique_ptr с deleter free: выравнивание max_align_t под
@@ -477,6 +532,10 @@ esp_err_t WsHandler::reg(httpd_handle_t server) {
     client_count_ = 0;
     memset(connected_clients_, 0, sizeof(connected_clients_));
   }
+  // Рестарт httpd: sockfd переиспользуются — старые окна rate-limit сбрасываем.
+  for (auto& s : rxRate_) {
+    s = RxRateSlot{};
+  }
 
   // Очередь и sender-задача — до подписки (иначе первые события упадут в
   // отсутствие очереди). Идемпотентно: reg() может повторяться.
@@ -531,8 +590,9 @@ esp_err_t WsHandler::reg(httpd_handle_t server) {
 }
 
 void WsHandler::unreg() {
-  ESP_LOGI(TAG, "Unregistering WebSocket handler (tx sent=%u, drops=%u)",
-           (unsigned)txSent_.load(), (unsigned)txDrops_.load());
+  ESP_LOGI(TAG, "Unregistering WebSocket handler (tx sent=%u, drops=%u, rx drops=%u)",
+           (unsigned)txSent_.load(), (unsigned)txDrops_.load(),
+           (unsigned)rxDrops_.load());
   // Порядок: сначала sender (он держит server_ и может дёргать
   // remove_client), потом снос клиентов, потом server_ = nullptr.
   stopTx();

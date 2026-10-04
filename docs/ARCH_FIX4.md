@@ -152,12 +152,14 @@ J1939System не входит в host-сборку, байты не провер
 
 ## Шаг 6. Rate-limit входящих WS-кадров
 
-- [ ] `WsHandler.hpp`: `kMaxInboundFramesPerSec = 50`; слоты
+- [x] `WsHandler.hpp`: `kMaxInboundFramesPerSec = 50`; слоты
       `{sockfd, windowMs, count}` на `kMaxClients` (обработчики httpd — одна
       задача, без лока; сброс слота в `add_client`/`remove_client`).
-- [ ] `WsHandler.cpp:275-307` (после валидации размера, до `malloc/post`):
+- [x] `WsHandler.cpp:275-307` (после валидации размера, до `malloc/post`):
       превышение окна → дроп + новая атомика `rxDrops_` + rate-limited лог
       (первый и каждый 50-й). Соединение не закрываем — только теряем кадры.
+      Дополнительно: сброс всех слотов в `reg()` (рестарт httpd) и `rxDrops_`
+      в логе `unreg()`.
 - Окно — `Timing::nowMs()` (`SystemTiming.hpp`, 01→04 разрешено).
 
 ## Шаг 7. seq: извлечение + дроп дублей в CommModule
@@ -229,7 +231,7 @@ auto st = ctx->fields.writeFieldDetectChange(uid, &value, sizeof(T),
 - [x] Шаг 3 — сериализация TP.CM + тесты CTS/EOM
 - [x] Шаг 4 — тест J1939MsgChannel + стаб очереди
 - [x] Шаг 5 — BootManager destroy + main
-- [ ] Шаг 6 — rate-limit входящих WS
+- [x] Шаг 6 — rate-limit входящих WS
 - [ ] Шаг 7 — seq дроп дублей
 - [x] Шаг 8 — golden-тест UID
 - [ ] Шаг 9 — удаление мёртвого + updateField
