@@ -10,12 +10,14 @@ class AppContext;
 // Единая точка создания модуля: new -> begin -> delete при ошибке.
 // Объявлен здесь, чтобы main оставался декларативной таблицей модулей.
 template <typename Module, typename... Args>
-inline esp_err_t makeModule(AppContext* ctx, Args&&... args) {
+inline esp_err_t makeModule(AppContext* ctx, void** outInst, Args&&... args) {
+    if (outInst) *outInst = nullptr;
     Module* m = new (std::nothrow) Module(ctx, std::forward<Args>(args)...);
     if (!m) return ESP_ERR_NO_MEM;
     esp_err_t err = m->begin();
-    if (err != ESP_OK) { delete m; }
-    return err;
+    if (err != ESP_OK) { delete m; return err; }   // упавший модуль удалён здесь
+    if (outInst) *outInst = m;
+    return ESP_OK;
 }
 
 // Регистрация модуля в BootManager. Критичные модули при ошибке останавливают
@@ -24,7 +26,11 @@ inline esp_err_t makeModule(AppContext* ctx, Args&&... args) {
 // уже залогирована внутри BootManager::add, а REGISTER_MODULE — declaration-
 // style макрос в main.
 #define REGISTER_MODULE(boot, name, Type, priority, critical, ...) \
-    ((void)(boot).add({name, [](AppContext* c) { return makeModule<Type>(c, ##__VA_ARGS__); }, priority, critical}))
+    ((void)(boot).add({name, \
+        [](AppContext* c, BootManager::Entry& e) -> esp_err_t { \
+            e.destroy = [](void* p) { delete static_cast<Type*>(p); }; \
+            return makeModule<Type>(c, &e.instance, ##__VA_ARGS__); \
+        }, priority, critical}))
 
 /**
  * @brief BootManager — табличный загрузчик модулей.
@@ -40,9 +46,11 @@ public:
 
     struct Entry {
         const char* name;                           ///< Имя модуля (для логов и isReady)
-        esp_err_t (*init)(AppContext* ctx);          ///< Функция инициализации (создание + begin)
+        esp_err_t (*init)(AppContext* ctx, Entry& e); ///< Создание + begin; e.instance заполняется при успехе
         uint8_t priority;                            ///< 0 = первый, 255 = последний
         bool critical;                               ///< true = без него система не работает
+        void* instance = nullptr;                    ///< Указатель на успешный модуль (nullptr = не стартовал/удалён)
+        void (*destroy)(void*) = nullptr;            ///< Останов + удаление модуля (dtor = graceful shutdown)
     };
 
     /** Зарегистрировать модуль. */

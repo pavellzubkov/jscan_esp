@@ -45,7 +45,7 @@ esp_err_t BootManager::startAll(AppContext* ctx) {
                  entries_[i].priority,
                  entries_[i].critical ? "YES" : "no");
 
-        esp_err_t err = entries_[i].init(ctx);
+        esp_err_t err = entries_[i].init(ctx, entries_[i]);
         results_[i] = err;
         started_[i] = true;
 
@@ -56,6 +56,18 @@ esp_err_t BootManager::startAll(AppContext* ctx) {
             }
             if (entries_[i].critical) {
                 ESP_LOGE(TAG, "[%s] is CRITICAL — aborting startup", entries_[i].name);
+                // Статус ДО teardown: FAIL-записи ещё в results_, started_.
+                dumpStatus();
+                // Останов уже стартовавших в обратном порядке. Упавший модуль
+                // не трогаем: makeModule уже удалил его (instance == nullptr).
+                for (size_t j = i; j-- > 0; ) {
+                    if (started_[j] && results_[j] == ESP_OK &&
+                        entries_[j].destroy && entries_[j].instance) {
+                        entries_[j].destroy(entries_[j].instance);
+                        entries_[j].instance = nullptr;
+                    }
+                    started_[j] = false;
+                }
                 return err;
             }
         } else {

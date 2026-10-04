@@ -135,18 +135,18 @@ J1939System не входит в host-сборку, байты не провер
 
 ## Шаг 5. BootManager: destroy при critical-отказе + код ошибки в main
 
-- [ ] `BootManager.hpp`: `Entry += void* instance; void (*destroy)(void*);`;
+- [x] `BootManager.hpp`: `Entry += void* instance; void (*destroy)(void*);`;
       сигнатура `init` → `(AppContext*, Entry&)`; `makeModule` получает
       `void** outInst` (заполняет при успехе); `REGISTER_MODULE` в лямбде
       ставит `e.instance/e.destroy`
       (`destroy = [](void* p){ delete static_cast<Type*>(p); }`).
-- [ ] `BootManager.cpp:57-59` (critical-ветка): **перед** `return` —
+- [x] `BootManager.cpp:57-59` (critical-ветка): **перед** `return` —
       `dumpStatus()` + останов уже стартовавших в обратном порядке
       (`destroy(instance)`, сброс `started_[j]`); упавший модуль уже удалён
       `makeModule` — его не трогаем.
-- [ ] `main.cpp:41-44`: лог `esp_err_to_name(overall)` вместо безликого
+- [x] `main.cpp:41-44`: лог `esp_err_to_name(overall)` вместо безликого
       `ESP_LOGW`.
-- [ ] `main.cpp:51`: проверить return `esp_ota_mark_app_valid_cancel_rollback()`.
+- [x] `main.cpp:51`: проверить return `esp_ota_mark_app_valid_cancel_rollback()`.
 - Деструкторы модулей уже корректны (graceful shutdown ARCH_FIX2) —
   destroy = готовая остановка.
 
@@ -228,7 +228,7 @@ auto st = ctx->fields.writeFieldDetectChange(uid, &value, sizeof(T),
 - [x] Шаг 2 — TWAI on_error + bus-off backoff + fail_retry_cnt
 - [x] Шаг 3 — сериализация TP.CM + тесты CTS/EOM
 - [x] Шаг 4 — тест J1939MsgChannel + стаб очереди
-- [ ] Шаг 5 — BootManager destroy + main
+- [x] Шаг 5 — BootManager destroy + main
 - [ ] Шаг 6 — rate-limit входящих WS
 - [ ] Шаг 7 — seq дроп дублей
 - [x] Шаг 8 — golden-тест UID

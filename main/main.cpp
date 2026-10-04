@@ -40,7 +40,8 @@ extern "C" void app_main() {
 
     esp_err_t overall = boot.startAll(&ctx);
     if (overall != ESP_OK) {
-        ESP_LOGW("MAIN", "Some modules failed — degraded mode");
+        ESP_LOGW("MAIN", "Some modules failed (%s) — degraded mode",
+                 esp_err_to_name(overall));
     }
 
     // Подтверждаем OTA-образ только после успешного старта критичных
@@ -48,8 +49,12 @@ extern "C" void app_main() {
     // секунды, mark не выполнится и bootloader откатит прошлое.
     if (boot.isReady("config")) {
         vTaskDelay(pdMS_TO_TICKS(5000));   // health-check: живём 5 с
-        esp_ota_mark_app_valid_cancel_rollback();
-        ESP_LOGI("MAIN", "OTA image validated");
+        const esp_err_t otaErr = esp_ota_mark_app_valid_cancel_rollback();
+        if (otaErr != ESP_OK) {
+            ESP_LOGE("MAIN", "OTA validate failed: %s", esp_err_to_name(otaErr));
+        } else {
+            ESP_LOGI("MAIN", "OTA image validated");
+        }
     } else {
         ESP_LOGE("MAIN", "critical module failed — OTA image NOT validated, rollback on next boot");
     }
