@@ -164,16 +164,16 @@ J1939System не входит в host-сборку, байты не провер
 
 ## Шаг 7. seq: извлечение + дроп дублей в CommModule
 
-- [ ] `J1939Proto::unwrapFrame` (`:118-139`): out-параметр `uint16_t* seq`
+- [x] `J1939Proto::unwrapFrame` (`:118-139`): out-параметр `uint16_t* seq`
       (байты 8–9, LE); обновить call site `CommModule.cpp:78` и тесты
       (roundtrip seq через `wrapFrame`).
-- [ ] `CommModule`: состояние на sockfd `{sockfd, lastSeq, valid}` — массив,
+- [x] `CommModule`: состояние на sockfd `{sockfd, lastSeq, valid}` — массив,
       обработка только в event-loop (одна задача — без локов):
   - `WS_CLIENT_CONNECTED` → сброс слота (реконнект — новая серия);
   - `seq==last && valid` → **дроп** + лог;
   - иначе `lastSeq=seq`; если не `last+1` — лог разрыва (resync, кадр
     принимаем).
-- [ ] `docs/PROTOCOL-J1939.md`: задокументировать семантику seq (в финальной
+- [x] `docs/PROTOCOL-J1939.md`: задокументировать семантику seq (в финальной
       ревизии спеки байт seq не описан).
 
 ## Шаг 8. Golden-тест стабильности UID
@@ -232,7 +232,7 @@ auto st = ctx->fields.writeFieldDetectChange(uid, &value, sizeof(T),
 - [x] Шаг 4 — тест J1939MsgChannel + стаб очереди
 - [x] Шаг 5 — BootManager destroy + main
 - [x] Шаг 6 — rate-limit входящих WS
-- [ ] Шаг 7 — seq дроп дублей
+- [x] Шаг 7 — seq дроп дублей
 - [x] Шаг 8 — golden-тест UID
 - [ ] Шаг 9 — удаление мёртвого + updateField
 - [ ] Финал: host-тесты зелёные + чистый `idf.py build`

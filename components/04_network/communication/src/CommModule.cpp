@@ -72,16 +72,36 @@ void CommunicationModule::onIncomingPacket(const ws_message_t* msg)
 
     uint16_t msgType = 0;
     uint8_t flags = 0;
+    uint16_t seq = 0;
     const uint8_t* payload = nullptr;
     size_t payloadLen = 0;
 
     if (!J1939Proto::unwrapFrame(reinterpret_cast<const uint8_t*>(msg->data),
-                                 msg->length, &msgType, &flags, &payload,
+                                 msg->length, &msgType, &flags, &seq, &payload,
                                  &payloadLen))
     {
         ESP_LOGW(TAG, "bad frame from sockfd=%d len=%u", msg->sockfd,
                  (unsigned)msg->length);
         return;
+    }
+
+    // Seq: дубль (seq == last валидной серии) — дропаем весь кадр до
+    // диспатча; разрыв (не last+1) — логируем resync, кадр принимаем.
+    if (SeqSlot* slot = seqSlot(msg->sockfd))
+    {
+        if (slot->valid && seq == slot->lastSeq)
+        {
+            ESP_LOGW(TAG, "duplicate seq=%u from sockfd=%d, dropping",
+                     (unsigned)seq, msg->sockfd);
+            return;
+        }
+        if (slot->valid && seq != static_cast<uint16_t>(slot->lastSeq + 1))
+        {
+            ESP_LOGW(TAG, "seq gap from sockfd=%d: %u -> %u (resync)",
+                     msg->sockfd, (unsigned)slot->lastSeq, (unsigned)seq);
+        }
+        slot->lastSeq = seq;
+        slot->valid = true;
     }
 
     // Диспатч по таблице kCmds: валидация длины payload (minLen/exact) —
@@ -203,6 +223,8 @@ void CommunicationModule::onWsClientConnected(const ws_message_t* msg)
 {
     if (!msg)
         return;
+    // Реконнект (или переиспользование sockfd) — новая серия seq.
+    resetSeqSlot(msg->sockfd);
     ESP_LOGI(TAG, "WS client %d connected, pushing all fields",
              msg->sockfd);
     // Push-on-connect: адресно отправить текущее значение каждого поля.
@@ -225,4 +247,35 @@ void CommunicationModule::onWifiStatus(const wifi_status_event_t* s)
     if (s)
         ESP_LOGI(TAG, "WIFI ap=%d clients=%u", s->is_ap_mode ? 1 : 0,
                  s->num_clients);
+}
+
+// Слот seq: линейный поиск по sockfd, иначе первый свободный.
+// nullptr — таблица полна: кадр принимается без дедупа (лучше без защиты,
+// чем глушить команды).
+CommunicationModule::SeqSlot* CommunicationModule::seqSlot(int sockfd)
+{
+    SeqSlot* freeSlot = nullptr;
+    for (auto& s : seqSlots_)
+    {
+        if (s.sockfd == sockfd)
+            return &s;
+        if (!freeSlot && s.sockfd == -1)
+            freeSlot = &s;
+    }
+    if (!freeSlot)
+        return nullptr;
+    freeSlot->sockfd = sockfd;
+    return freeSlot;
+}
+
+void CommunicationModule::resetSeqSlot(int sockfd)
+{
+    for (auto& s : seqSlots_)
+    {
+        if (s.sockfd == sockfd)
+        {
+            s = SeqSlot{};
+            return;
+        }
+    }
 }

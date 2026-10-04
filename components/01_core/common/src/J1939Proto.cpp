@@ -115,8 +115,9 @@ size_t J1939Proto::wrapFrame(uint16_t msgType, uint8_t flags,
 }
 
 // Разбор входящего кадра: magic/ver/CRC + поля. false — битый кадр.
+// seq (байты 8–9 LE) — nullable, как и остальные out-параметры.
 bool J1939Proto::unwrapFrame(const uint8_t* frame, size_t len,
-                             uint16_t* msgType, uint8_t* flags,
+                             uint16_t* msgType, uint8_t* flags, uint16_t* seq,
                              const uint8_t** payload, size_t* payloadLen) {
     if (len < kMinPacketSize) return false;
     if (frame[0] != kMagic0 || frame[1] != kMagic1) return false;
@@ -134,6 +135,8 @@ bool J1939Proto::unwrapFrame(const uint8_t* frame, size_t len,
     if (msgType) *msgType = static_cast<uint16_t>(frame[4]) |
                             (static_cast<uint16_t>(frame[5]) << 8);
     if (flags) *flags = frame[3];
+    if (seq) *seq = static_cast<uint16_t>(frame[8]) |
+                    (static_cast<uint16_t>(frame[9]) << 8);
     if (payload) *payload = (plen > 0) ? &frame[kHeaderSize] : nullptr;
     if (payloadLen) *payloadLen = plen;
     return true;

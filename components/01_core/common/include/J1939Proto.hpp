@@ -42,6 +42,6 @@ size_t   wrapFrame(uint16_t msgType, uint8_t flags,
                    const uint8_t* payload, size_t payloadLen,
                    uint16_t seq, uint8_t* out, size_t outCap);    // 0 = не влезло
 bool     unwrapFrame(const uint8_t* frame, size_t len,
-                     uint16_t* msgType, uint8_t* flags,
+                     uint16_t* msgType, uint8_t* flags, uint16_t* seq,
                      const uint8_t** payload, size_t* payloadLen); // + проверка CRC
 }

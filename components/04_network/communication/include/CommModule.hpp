@@ -62,4 +62,18 @@ private:
         {J1939Proto::kMsgTypeParamSet,     2, false, &CommunicationModule::onCmdParamSet},
         {J1939Proto::kMsgTypeFactoryReset, 0, false, &CommunicationModule::onCmdFactoryReset},
     };
+
+    // --- Seq: дроп дублей входящих кадров (per-sockfd) ---
+    // Массив, без локов: оба обработчика (WS_MESSAGE_RECEIVED и
+    // WS_CLIENT_*) выполняются только в event-loop (одна задача).
+    static constexpr size_t kMaxSeqSlots = 10;   // = kMaxClients у WsHandler
+    struct SeqSlot {
+        int      sockfd  = -1;
+        uint16_t lastSeq = 0;
+        bool     valid   = false;   // серия заведена (первый кадр принят)
+    };
+    SeqSlot seqSlots_[kMaxSeqSlots]{};
+    // Найти слот сокета; nullptr — нет свободных (кадр принимаем без дедупа).
+    SeqSlot* seqSlot(int sockfd);
+    void resetSeqSlot(int sockfd);
 };

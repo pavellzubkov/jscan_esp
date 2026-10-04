@@ -91,23 +91,27 @@ static void test_proto() {
     CHECK(frame[4] == 0x01 && frame[5] == 0x00);   // MsgType LE
     CHECK(frame[8] == 0x34 && frame[9] == 0x12);   // seq LE
 
-    uint16_t mt = 0; uint8_t fl = 0;
+    uint16_t mt = 0; uint8_t fl = 0; uint16_t sq = 0;
     const uint8_t* pl = nullptr; size_t plen = 0;
-    CHECK(J1939Proto::unwrapFrame(frame, flen, &mt, &fl, &pl, &plen));
+    CHECK(J1939Proto::unwrapFrame(frame, flen, &mt, &fl, &sq, &pl, &plen));
     CHECK(mt == J1939Proto::kMsgTypeSnapshot && fl == J1939Proto::kFlagSnapshot);
+    CHECK(sq == 0x1234);                              // roundtrip seq (LE)
     CHECK(plen == 3 && pl && std::memcmp(pl, payload, 3) == 0);
 
     // Слишком маленький кадр.
-    CHECK(!J1939Proto::unwrapFrame(frame, 4, &mt, &fl, &pl, &plen));
+    CHECK(!J1939Proto::unwrapFrame(frame, 4, &mt, &fl, &sq, &pl, &plen));
     // Битый magic.
     uint8_t bad[32];
     std::memcpy(bad, frame, flen);
     bad[0] = 0xFF;
-    CHECK(!J1939Proto::unwrapFrame(bad, flen, &mt, &fl, &pl, &plen));
+    CHECK(!J1939Proto::unwrapFrame(bad, flen, &mt, &fl, &sq, &pl, &plen));
     // Битый CRC.
     std::memcpy(bad, frame, flen);
     bad[flen - 1] ^= 0xFF;
-    CHECK(!J1939Proto::unwrapFrame(bad, flen, &mt, &fl, &pl, &plen));
+    CHECK(!J1939Proto::unwrapFrame(bad, flen, &mt, &fl, &sq, &pl, &plen));
+    // Nullable seq: nullptr не падает.
+    CHECK(J1939Proto::unwrapFrame(frame, flen, &mt, &fl, nullptr, &pl, &plen));
+    CHECK(sq == 0x1234);                              // не перезаписан nullptr'ом
     // wrapFrame не влезает.
     CHECK(J1939Proto::wrapFrame(J1939Proto::kMsgTypeSnapshot, 0, payload, 3,
                                 1, frame, 4) == 0);
